@@ -487,6 +487,23 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     }
   };
 
+  const playChime = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.35, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.7);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.7);
+      setTimeout(() => ctx.close(), 1000);
+    } catch {}
+  };
+
   const adminLogout = async () => {
     if (adminToken) {
       await fetch('/api/admin/logout', {
@@ -641,7 +658,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     if (!name) return;
 
     const entry: QueueEntry = {
-      id: 'SSB-' + crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase(),
+      id: 'SQ-' + crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase(),
       name,
       branch: formData.get('clientBranch') as string,
       service: formData.get('clientService') as string,
@@ -659,8 +676,12 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         body: JSON.stringify(entry)
       });
       if (res.ok) {
+        const waitingAhead = queue.filter(q => q.status === 'Waiting' && q.branch === entry.branch).length;
+        const position = waitingAhead + 1;
+        const avgMin = analytics.tat > 0 ? analytics.tat : 5;
+        const estWait = Math.round(position * avgMin);
         await fetchData();
-        showNotification(`Ticket Issued: ${entry.id}`);
+        showNotification(`Ticket ${entry.id} · #${position} in line · ~${estWait} min wait`);
         setView('teller');
         e.currentTarget.reset();
       } else {
@@ -679,7 +700,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, calledTime: new Date().toISOString() })
       });
-      if (res.ok) await fetchData();
+      if (res.ok) { playChime(); await fetchData(); }
       else showNotification('Failed to call customer. Please try again.', true);
     } catch {
       showNotification('Failed to call customer. Check connection.', true);
@@ -697,6 +718,20 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       else showNotification('Failed to complete transaction. Please try again.', true);
     } catch {
       showNotification('Failed to complete transaction. Check connection.', true);
+    }
+  };
+
+  const markNoShow = async (id: string) => {
+    try {
+      const res = await fetch('/api/noshow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) await fetchData();
+      else showNotification('Failed to mark no-show. Please try again.', true);
+    } catch {
+      showNotification('Failed to mark no-show. Check connection.', true);
     }
   };
 
@@ -863,17 +898,17 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Account Type</label>
-                      <select name="clientPriority" aria-label="Account Type" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Customer Type</label>
+                      <select name="clientPriority" aria-label="Customer Type" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
                         <option value="Regular">Regular</option>
-                        <option value="Priority">Priority (Senior/PWD)</option>
+                        <option value="Priority">Priority</option>
                       </select>
                     </div>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Transaction Type</label>
-                    <select name="clientService" aria-label="Transaction Type" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Service Type</label>
+                    <select name="clientService" aria-label="Service Type" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
                       {SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
@@ -931,7 +966,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                               <span className="font-bold text-slate-800">{item.name}</span>
                               {item.priority === 'Priority' && <span className="bg-amber-100 text-amber-600 text-[8px] font-black px-1.5 py-0.5 rounded">PRIORITY</span>}
                             </div>
-                            <p className="text-[9px] text-slate-400">{item.priority} Account</p>
+                            <p className="text-[9px] text-slate-400">{item.priority}</p>
                           </td>
                           <td className="px-6 py-5">
                             <span className="text-xs font-semibold text-slate-600">{item.service}</span>
@@ -968,10 +1003,15 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                             {item.status === 'Waiting' ? (
                               <button type="button" onClick={() => callNext(item.id)} className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-4 py-2 rounded-lg hover:bg-amber-50 transition-colors shadow-sm">Call Client</button>
                             ) : (
-                              <button type="button" onClick={() => completeTransaction(item.id)} className="text-[10px] font-bold uppercase bg-[#003366] text-white px-4 py-2 rounded-lg hover:shadow-lg transition-all shadow-md flex items-center gap-2 ml-auto">
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
-                                Finish Transaction
-                              </button>
+                              <div className="flex flex-col items-end gap-2">
+                                <button type="button" onClick={() => completeTransaction(item.id)} className="text-[10px] font-bold uppercase bg-[#003366] text-white px-4 py-2 rounded-lg hover:shadow-lg transition-all shadow-md flex items-center gap-2">
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
+                                  Finish
+                                </button>
+                                <button type="button" onClick={() => markNoShow(item.id)} className="text-[10px] font-bold uppercase text-slate-400 border border-slate-200 px-4 py-1.5 rounded-lg hover:bg-slate-50 hover:text-red-500 hover:border-red-200 transition-colors">
+                                  No Show
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -1021,7 +1061,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                 <div className="white-card p-6 rounded-2xl">
                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Total Serviced Today</p>
                   <h3 className="text-3xl font-black text-[#003366] metric-value">{analytics.total}</h3>
-                  <p className="text-[9px] text-blue-600 font-bold mt-2">Across {BRANCHES.length} Branches</p>
+                  <p className="text-[9px] text-blue-600 font-bold mt-2">Across {BRANCHES.length} Locations</p>
                 </div>
               </div>
 
@@ -1082,48 +1122,6 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                 </div>
               </div>
 
-              {/* Project Development Team */}
-              <div className="mt-12 space-y-8 bg-white p-10 rounded-[3rem] border border-slate-100">
-                <div className="text-center">
-                  <p className="text-[10px] font-black text-amber-500 uppercase tracking-[0.4em] mb-2">Enterprise Solutions</p>
-                  <h4 className="text-2xl font-black text-[#003366] uppercase tracking-tight">Project Development Team</h4>
-                  <div className="h-1.5 w-16 bg-[#003366] mx-auto mt-4 rounded-full"></div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-                  <div className="text-center group">
-                    <div className="profile-frame group-hover:scale-105 transition-transform duration-300">
-                      <div className="profile-inner">
-                        <img src="https://media.licdn.com/dms/image/v2/D5603AQGH0ybzOK3UDQ/profile-displayphoto-scale_200_200/B56Zx4tivxGwAY-/0/1771551734704?e=2147483647&v=beta&t=BCBC5AhYwV6lJTI6hNyIPA8EXc0Qrov-I1ZACNNI1Uo" alt="Rodelio Lagahit" className="w-full h-full object-cover" />
-                      </div>
-                    </div>
-                    <h5 className="font-extrabold text-[#003366] text-lg leading-tight">Rodelio Lagahit</h5>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1 mb-1">Head of HR & Security</p>
-                    <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">Lead Developer</p>
-                    <p className="text-[11px] text-slate-500 mt-4 leading-relaxed px-2">Architecting the core queue logic, secure database schemas, and real-time synchronization engine.</p>
-                  </div>
-                  <div className="text-center group">
-                    <div className="profile-frame group-hover:scale-105 transition-transform duration-300">
-                      <div className="profile-inner">
-                        <img src="https://sunsavings.ph/wp-content/uploads/bfi_thumb/beans-o46ee8vdiu7dqy36mulh2uyxfpwid3v9bls0j23daw.png" alt="Beans Gonzales" className="w-full h-full object-cover" />
-                      </div>
-                    </div>
-                    <h5 className="font-extrabold text-[#003366] text-lg">Beans Gonzales</h5>
-                    <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mt-1">COO, EVP & Treasurer</p>
-                    <p className="text-[11px] text-slate-500 mt-4 leading-relaxed px-2">Driving strategic implementation, operational alignment, and efficient resource allocation for the bank.</p>
-                  </div>
-                  <div className="text-center group">
-                    <div className="profile-frame group-hover:scale-105 transition-transform duration-300">
-                      <div className="profile-inner">
-                        <img src="https://d2gjqh9j26unp0.cloudfront.net/profilepic/5af07a5bc15422e1ee86ea61d87507ef" alt="Dwight Cuevas" className="w-full h-full object-cover" />
-                      </div>
-                    </div>
-                    <h5 className="font-extrabold text-[#003366] text-lg leading-tight">Dwight Cuevas</h5>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1 mb-1">Sr. AVP of Products</p>
-                    <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">Lead Support</p>
-                    <p className="text-[11px] text-slate-500 mt-4 leading-relaxed px-2">Overseeing branch-level deployments, technical onboarding, and multi-tier system reliability.</p>
-                  </div>
-                </div>
-              </div>
             </motion.section>
           )}
 
@@ -1816,7 +1814,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
             <span className="hover:text-blue-900 cursor-pointer">Branch Network</span>
             <span className="hover:text-blue-900 cursor-pointer">Support Hub</span>
           </div>
-          <p className="text-[10px] text-slate-300 mt-6">© 2026 Sun Savings Bank. All rights reserved.</p>
+          <p className="text-[10px] text-slate-300 mt-6">© 2026 Smart Queue. All rights reserved.</p>
         </div>
       </footer>
     </div>

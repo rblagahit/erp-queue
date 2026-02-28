@@ -138,6 +138,11 @@ async function startServer() {
     db.prepare(`ALTER TABLE tenants ADD COLUMN plan TEXT DEFAULT 'free'`).run();
   }
 
+  // Performance indexes — safe to run repeatedly (IF NOT EXISTS)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_history_tenant_completed ON history(tenant_id, completedTime);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_history_branch_completed ON history(branch, completedTime);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_queue_tenant_status ON queue(tenant_id, status);`);
+
   // Seed default super_admin user if none exist
   const userCount = (db.prepare('SELECT COUNT(1) as c FROM users').get() as any).c as number;
   if (userCount === 0) {
@@ -854,6 +859,24 @@ async function startServer() {
       `).run(
         item.id, item.tenant_id || 'default', item.name, item.branch, item.service, item.priority,
         item.checkInTime, "Completed", item.calledTime, completedTime
+      );
+      db.prepare("DELETE FROM queue WHERE id = ?").run(id);
+      broadcast({ type: "QUEUE_UPDATED" });
+      broadcast({ type: "HISTORY_UPDATED" });
+    }
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/noshow", (req, res) => {
+    const { id } = req.body;
+    const item = db.prepare("SELECT * FROM queue WHERE id = ?").get(id) as any;
+    if (item) {
+      db.prepare(`
+        INSERT INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        item.id, item.tenant_id || 'default', item.name, item.branch, item.service, item.priority,
+        item.checkInTime, "No Show", item.calledTime, new Date().toISOString()
       );
       db.prepare("DELETE FROM queue WHERE id = ?").run(id);
       broadcast({ type: "QUEUE_UPDATED" });
