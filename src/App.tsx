@@ -883,7 +883,8 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
   const handleCheckIn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const formData = new FormData(form);
     const name = formData.get('clientName') as string;
     if (!name) return;
     const headers: HeadersInit = { 'Content-Type': 'application/json' };
@@ -915,7 +916,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         await fetchData();
         showNotification(`Ticket ${entry.id} · #${position} in line · ~${estWait} min wait`);
         if (adminToken) setView('teller');
-        const nameInput = e.currentTarget.elements.namedItem('clientName') as HTMLInputElement | null;
+        const nameInput = form.elements.namedItem('clientName') as HTMLInputElement | null;
         if (nameInput) nameInput.value = '';
       } else {
         const errData = await res.json().catch(() => ({ error: 'Check-in failed' }));
