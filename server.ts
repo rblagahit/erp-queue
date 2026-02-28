@@ -770,14 +770,22 @@ async function startServer() {
 
   // ===== QUEUE API ROUTES =====
 
-  app.get("/api/queue", (_req, res) => {
-    const rows = db.prepare("SELECT * FROM queue").all();
+  app.get("/api/queue", (req, res) => {
+    const token = req.headers["x-admin-token"] as string | undefined;
+    const user = token ? getUserFromToken(token) : null;
+    const rows = user?.tenant_id
+      ? db.prepare("SELECT * FROM queue WHERE tenant_id = ? ORDER BY CASE WHEN priority='Priority' THEN 0 ELSE 1 END, checkInTime ASC").all(user.tenant_id)
+      : db.prepare("SELECT * FROM queue ORDER BY CASE WHEN priority='Priority' THEN 0 ELSE 1 END, checkInTime ASC").all();
     res.json(rows);
   });
 
   // No LIMIT — analytics need complete history
-  app.get("/api/history", (_req, res) => {
-    const rows = db.prepare("SELECT * FROM history ORDER BY completedTime DESC").all();
+  app.get("/api/history", (req, res) => {
+    const token = req.headers["x-admin-token"] as string | undefined;
+    const user = token ? getUserFromToken(token) : null;
+    const rows = user?.tenant_id
+      ? db.prepare("SELECT * FROM history WHERE tenant_id = ? ORDER BY completedTime DESC").all(user.tenant_id)
+      : db.prepare("SELECT * FROM history ORDER BY completedTime DESC").all();
     res.json(rows);
   });
 

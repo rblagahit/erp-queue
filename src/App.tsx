@@ -108,10 +108,12 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   };
 
   const fetchData = async () => {
+    const token = localStorage.getItem('adminToken');
+    const headers: HeadersInit = token ? { 'x-admin-token': token } : {};
     try {
       const [qRes, hRes] = await Promise.all([
-        fetch('/api/queue'),
-        fetch('/api/history')
+        fetch('/api/queue', { headers }),
+        fetch('/api/history', { headers })
       ]);
       if (qRes.ok) setQueue(await qRes.json());
       if (hRes.ok) setHistory(await hRes.json());
@@ -619,7 +621,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       const dateTag = exportFrom || exportTo
         ? `${exportFrom || 'start'}_to_${exportTo || 'end'}`
         : 'all-dates';
-      link.download = `SSB_Queue_Report_${dateTag}.csv`;
+      link.download = `SmartQueue_Report_${dateTag}.csv`;
       document.body.appendChild(link);
       link.click();
       setTimeout(() => { document.body.removeChild(link); window.URL.revokeObjectURL(url); }, 100);
@@ -678,8 +680,9 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         body: JSON.stringify({ id, calledTime: new Date().toISOString() })
       });
       if (res.ok) await fetchData();
-    } catch (err) {
-      console.error("Call failed", err);
+      else showNotification('Failed to call customer. Please try again.', true);
+    } catch {
+      showNotification('Failed to call customer. Check connection.', true);
     }
   };
 
@@ -691,8 +694,9 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         body: JSON.stringify({ id, completedTime: new Date().toISOString() })
       });
       if (res.ok) await fetchData();
-    } catch (err) {
-      console.error("Completion failed", err);
+      else showNotification('Failed to complete transaction. Please try again.', true);
+    } catch {
+      showNotification('Failed to complete transaction. Check connection.', true);
     }
   };
 
