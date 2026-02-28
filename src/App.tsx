@@ -75,6 +75,26 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
 
+  // Role-based access
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+
+  // SMTP settings state
+  const [smtpHost, setSmtpHost] = useState('');
+  const [smtpPort, setSmtpPort] = useState('587');
+  const [smtpSecure, setSmtpSecure] = useState(false);
+  const [smtpUser, setSmtpUser] = useState('');
+  const [smtpPass, setSmtpPass] = useState('');
+  const [smtpFrom, setSmtpFrom] = useState('');
+  const [smtpTo, setSmtpTo] = useState('');
+  const [smtpSaving, setSmtpSaving] = useState(false);
+
+  // Super admin — users & tenants
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [adminTenants, setAdminTenants] = useState<any[]>([]);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState<string | null>(null);
+  const [confirmDeleteTenant, setConfirmDeleteTenant] = useState<string | null>(null);
+  const [editTenantName, setEditTenantName] = useState<Record<string, string>>({});
+
   // UI state
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [confirmRemoveIP, setConfirmRemoveIP] = useState<string | null>(null);
@@ -129,9 +149,14 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     const stored = localStorage.getItem('adminToken');
     if (stored) {
       fetch('/api/admin/verify', { headers: { 'x-admin-token': stored } })
-        .then(res => {
-          if (res.ok) setAdminToken(stored);
-          else localStorage.removeItem('adminToken');
+        .then(async res => {
+          if (res.ok) {
+            setAdminToken(stored);
+            const me = await fetch('/api/auth/me', { headers: { 'x-admin-token': stored } });
+            if (me.ok) { const u = await me.json(); setCurrentUserRole(u.role); }
+          } else {
+            localStorage.removeItem('adminToken');
+          }
         })
         .catch(() => localStorage.removeItem('adminToken'));
     }
@@ -149,13 +174,21 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     }
   }, []);
 
-  // Load IPs and settings when entering admin view
+  // Load IPs, settings, SMTP, and super-admin data when entering admin view
   useEffect(() => {
     if (view === 'admin' && adminToken) {
       loadIPs();
       loadSettings();
+      loadSmtp();
     }
   }, [view, adminToken]);
+
+  useEffect(() => {
+    if (view === 'admin' && adminToken && currentUserRole === 'super_admin') {
+      loadAdminUsers();
+      loadAdminTenants();
+    }
+  }, [view, adminToken, currentUserRole]);
 
   // ===== ADMIN FUNCTIONS =====
 
@@ -226,6 +259,135 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     }
   };
 
+  const loadSmtp = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/smtp', { headers: { 'x-admin-token': t } });
+      if (res.ok) {
+        const d = await res.json();
+        setSmtpHost(d.host || '');
+        setSmtpPort(String(d.port || 587));
+        setSmtpSecure(d.secure || false);
+        setSmtpUser(d.user || '');
+        setSmtpFrom(d.from || '');
+        setSmtpTo(d.to || '');
+      }
+    } catch {}
+  };
+
+  const saveSmtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    setSmtpSaving(true);
+    try {
+      const res = await fetch('/api/admin/smtp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ host: smtpHost, port: Number(smtpPort), secure: smtpSecure, user: smtpUser, pass: smtpPass, from: smtpFrom, to: smtpTo }),
+      });
+      if (res.ok) showNotification('SMTP settings saved.');
+      else showNotification('Failed to save SMTP settings.', true);
+    } catch {
+      showNotification('Failed to save SMTP settings. Check connection.', true);
+    } finally {
+      setSmtpSaving(false);
+    }
+  };
+
+  const downloadPDF = async () => {
+    if (!adminToken) return;
+    const params = new URLSearchParams();
+    if (exportFrom) params.append('from', exportFrom);
+    if (exportTo) params.append('to', exportTo);
+    try {
+      const res = await fetch(`/api/admin/report/pdf?${params}`, { headers: { 'x-admin-token': adminToken } });
+      if (!res.ok) { showNotification('Failed to generate PDF.', true); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `report-${exportFrom || 'all'}-${exportTo || 'today'}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      showNotification('Failed to download PDF. Check connection.', true);
+    }
+  };
+
+  const loadAdminUsers = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/users', { headers: { 'x-admin-token': t } });
+      if (res.ok) setAdminUsers(await res.json());
+    } catch {}
+  };
+
+  const loadAdminTenants = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/tenants', { headers: { 'x-admin-token': t } });
+      if (res.ok) {
+        const data = await res.json();
+        setAdminTenants(data);
+        const names: Record<string, string> = {};
+        data.forEach((t: any) => { names[t.id] = t.name; });
+        setEditTenantName(names);
+      }
+    } catch {}
+  };
+
+  const updateUserRole = async (userId: string, role: string) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ role }),
+      });
+      if (res.ok) { showNotification('Role updated.'); await loadAdminUsers(); }
+      else showNotification('Failed to update role.', true);
+    } catch { showNotification('Failed to update role.', true); }
+  };
+
+  const deleteUser = async (userId: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch(`/api/admin/users/${userId}`, { method: 'DELETE', headers: { 'x-admin-token': adminToken } });
+      setConfirmDeleteUser(null);
+      showNotification('User deleted.');
+      await loadAdminUsers();
+    } catch { showNotification('Failed to delete user.', true); }
+  };
+
+  const updateTenantName = async (tenantId: string) => {
+    if (!adminToken) return;
+    const name = editTenantName[tenantId];
+    if (!name?.trim()) return;
+    try {
+      const res = await fetch(`/api/admin/tenants/${tenantId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (res.ok) { showNotification('Tenant updated.'); await loadAdminTenants(); }
+      else showNotification('Failed to update tenant.', true);
+    } catch { showNotification('Failed to update tenant.', true); }
+  };
+
+  const deleteTenant = async (tenantId: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch(`/api/admin/tenants/${tenantId}`, { method: 'DELETE', headers: { 'x-admin-token': adminToken } });
+      setConfirmDeleteTenant(null);
+      showNotification('Tenant deleted.');
+      await loadAdminTenants();
+      await loadAdminUsers();
+    } catch { showNotification('Failed to delete tenant.', true); }
+  };
+
   const adminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAdminLoginError(null);
@@ -243,6 +405,9 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         setAdminPassword('');
         loadIPs(token);
         loadSettings(token);
+        loadSmtp(token);
+        fetch('/api/auth/me', { headers: { 'x-admin-token': token } })
+          .then(r => r.json()).then(u => setCurrentUserRole(u.role)).catch(() => {});
       } else {
         const err = await res.json().catch(() => ({}));
         setAdminLoginError(err.error || 'Invalid email or password. Please try again.');
@@ -307,6 +472,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       }).catch(() => {});
     }
     setAdminToken(null);
+    setCurrentUserRole(null);
     localStorage.removeItem('adminToken');
     setView('teller');
   };
@@ -569,7 +735,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
               title="Back to home"
             >
               <h1 className="font-bold text-xl text-[#003366] leading-none uppercase tracking-tight group-hover:text-[#002244] transition-colors">
-                Sun Savings <span className="text-amber-500 font-extrabold">Bank</span>
+                Smart <span className="text-amber-500 font-extrabold">Queue</span>
               </h1>
               <p className="text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Smart Queue Intelligence</p>
             </button>
@@ -655,7 +821,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                     <span className="text-[10px] font-bold text-amber-700 uppercase tracking-tighter">Self-Service Kiosk</span>
                   </div>
                   <h2 className="text-3xl font-extrabold text-[#003366]">Get Your Ticket</h2>
-                  <p className="text-slate-500 mt-2 text-sm">Welcome to Sun Savings Bank. Please check in below.</p>
+                  <p className="text-slate-500 mt-2 text-sm">Welcome to Smart Queue. Please check in below.</p>
                 </div>
 
                 <form onSubmit={handleCheckIn} className="space-y-5">
@@ -1098,7 +1264,10 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                     <div>
                       <h2 className="text-2xl font-extrabold text-[#003366]">Admin Panel</h2>
-                      <p className="text-xs text-slate-400 font-medium">IP Whitelist · Report Export · API Settings</p>
+                      <p className="text-xs text-slate-400 font-medium">
+                        IP Whitelist · Reports · SMTP · API Settings
+                        {currentUserRole === 'super_admin' && <span className="ml-2 text-amber-500 font-black">· Super Admin</span>}
+                      </p>
                     </div>
                     <button
                       type="button"
@@ -1275,6 +1444,16 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                           </svg>
                           Download CSV
                         </button>
+                        <button
+                          type="button"
+                          onClick={downloadPDF}
+                          className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-800 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                          </svg>
+                          Download PDF Report
+                        </button>
                         {(exportFrom || exportTo || exportBranch !== 'All') && (
                           <button
                             type="button"
@@ -1287,8 +1466,53 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                       </div>
                     </div>
 
+                    {/* SMTP SETTINGS PANEL */}
+                    <div className="white-card rounded-2xl p-6 space-y-5">
+                      <div className="border-b pb-3">
+                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Email / SMTP Settings</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Configure your outbound email server for scheduled reports.</p>
+                      </div>
+                      <form onSubmit={saveSmtp} className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SMTP Host</label>
+                            <input value={smtpHost} onChange={e => setSmtpHost(e.target.value)} placeholder="smtp.gmail.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Port</label>
+                            <input value={smtpPort} onChange={e => setSmtpPort(e.target.value)} placeholder="587" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Username</label>
+                            <input value={smtpUser} onChange={e => setSmtpUser(e.target.value)} placeholder="user@example.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Password</label>
+                            <input type="password" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} placeholder="Leave blank to keep" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">From Address</label>
+                          <input value={smtpFrom} onChange={e => setSmtpFrom(e.target.value)} placeholder="no-reply@yourorg.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Report Recipient Email</label>
+                          <input type="email" value={smtpTo} onChange={e => setSmtpTo(e.target.value)} placeholder="manager@yourorg.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input type="checkbox" checked={smtpSecure} onChange={e => setSmtpSecure(e.target.checked)} className="rounded" />
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">Use TLS/SSL (port 465)</span>
+                        </label>
+                        <button type="submit" disabled={smtpSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
+                          {smtpSaving ? 'Saving…' : 'Save SMTP Settings'}
+                        </button>
+                      </form>
+                    </div>
+
                     {/* API KEY PANEL */}
-                    <div className="white-card rounded-2xl p-6 space-y-5 md:col-span-2">
+                    <div className="white-card rounded-2xl p-6 space-y-5">
                       <div className="border-b pb-3">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Google API Key</h4>
                         <p className="text-[10px] text-slate-400 mt-0.5">Update the Google API key used by the system. The key is stored securely and never returned in full.</p>
@@ -1343,6 +1567,170 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                     </div>
 
                   </div>
+
+                  {/* ===== SUPER ADMIN PANELS ===== */}
+                  {currentUserRole === 'super_admin' && (
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-3 pt-2">
+                        <div className="h-px flex-1 bg-amber-200"></div>
+                        <span className="text-[10px] font-black text-amber-600 uppercase tracking-[0.3em] px-2">Super Admin</span>
+                        <div className="h-px flex-1 bg-amber-200"></div>
+                      </div>
+
+                      {/* USER MANAGEMENT PANEL */}
+                      <div className="white-card rounded-2xl p-6 space-y-5">
+                        <div className="flex justify-between items-start border-b pb-3">
+                          <div>
+                            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">User Management</h4>
+                            <p className="text-[10px] text-slate-400 mt-0.5">All registered users across all tenants. Change roles or remove accounts.</p>
+                          </div>
+                          <button type="button" onClick={() => loadAdminUsers()} className="text-[10px] font-bold text-slate-400 hover:text-[#003366] uppercase tracking-widest transition-colors">Refresh</button>
+                        </div>
+
+                        {adminUsers.length === 0 ? (
+                          <p className="text-xs text-slate-400 text-center py-4">No users found.</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                              <thead>
+                                <tr className="border-b border-slate-100">
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">User</th>
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Tenant</th>
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Role</th>
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Joined</th>
+                                  <th className="pb-2" scope="col"><span className="sr-only">Actions</span></th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {adminUsers.map(u => (
+                                  <tr key={u.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="py-3 pr-4">
+                                      <p className="text-xs font-bold text-[#003366]">{u.name || '—'}</p>
+                                      <p className="text-[10px] text-slate-400 font-mono">{u.email}</p>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <p className="text-xs text-slate-600">{u.tenantName || u.tenant_id}</p>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <select
+                                        aria-label="User role"
+                                        value={u.role}
+                                        onChange={e => updateUserRole(u.id, e.target.value)}
+                                        className="text-[10px] font-bold bg-slate-100 border-0 rounded-lg px-2 py-1.5 outline-none cursor-pointer focus:ring-2 focus:ring-amber-400"
+                                      >
+                                        <option value="tenant_admin">Tenant Admin</option>
+                                        <option value="super_admin">Super Admin</option>
+                                      </select>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <p className="text-[10px] text-slate-400">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '—'}</p>
+                                    </td>
+                                    <td className="py-3">
+                                      {confirmDeleteUser === u.id ? (
+                                        <div className="flex items-center gap-1">
+                                          <button type="button" onClick={() => deleteUser(u.id)} className="text-[9px] font-black uppercase text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-md transition-colors">Delete</button>
+                                          <button type="button" onClick={() => setConfirmDeleteUser(null)} className="text-[9px] font-black uppercase text-slate-500 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors">Cancel</button>
+                                        </div>
+                                      ) : (
+                                        <button type="button" onClick={() => setConfirmDeleteUser(u.id)} className="text-red-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors" title="Delete user">
+                                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                          </svg>
+                                        </button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* TENANT MANAGEMENT PANEL */}
+                      <div className="white-card rounded-2xl p-6 space-y-5">
+                        <div className="flex justify-between items-start border-b pb-3">
+                          <div>
+                            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Tenant Management</h4>
+                            <p className="text-[10px] text-slate-400 mt-0.5">All registered organizations. Edit names or remove inactive tenants.</p>
+                          </div>
+                          <button type="button" onClick={() => loadAdminTenants()} className="text-[10px] font-bold text-slate-400 hover:text-[#003366] uppercase tracking-widest transition-colors">Refresh</button>
+                        </div>
+
+                        {adminTenants.length === 0 ? (
+                          <p className="text-xs text-slate-400 text-center py-4">No tenants found.</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                              <thead>
+                                <tr className="border-b border-slate-100">
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Name</th>
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Slug</th>
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Plan</th>
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Users</th>
+                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Created</th>
+                                  <th className="pb-2" scope="col"><span className="sr-only">Actions</span></th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {adminTenants.map(t => (
+                                  <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="py-3 pr-4">
+                                      <div className="flex items-center gap-2">
+                                        <input
+                                          aria-label="Tenant name"
+                                          title="Edit tenant name"
+                                          value={editTenantName[t.id] ?? t.name}
+                                          onChange={e => setEditTenantName(prev => ({ ...prev, [t.id]: e.target.value }))}
+                                          className="text-xs font-bold text-[#003366] bg-transparent border-b border-transparent hover:border-slate-300 focus:border-amber-400 outline-none w-36 transition-all"
+                                        />
+                                        {editTenantName[t.id] !== t.name && (
+                                          <button type="button" onClick={() => updateTenantName(t.id)} className="text-[9px] font-black uppercase text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded transition-colors hover:bg-amber-50">Save</button>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <p className="text-[10px] text-slate-400 font-mono">{t.slug}</p>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <span className={cn(
+                                        "text-[9px] font-black uppercase px-2 py-0.5 rounded-full",
+                                        t.plan === 'pro' ? "bg-purple-100 text-purple-700" :
+                                        t.plan === 'starter' ? "bg-blue-100 text-blue-700" :
+                                        "bg-slate-100 text-slate-500"
+                                      )}>{t.plan || 'free'}</span>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <p className="text-xs text-slate-600 font-bold">{t.userCount}</p>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <p className="text-[10px] text-slate-400">{t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}</p>
+                                    </td>
+                                    <td className="py-3">
+                                      {t.id === 'default' ? (
+                                        <span className="text-[9px] font-bold text-slate-300 uppercase">Default</span>
+                                      ) : confirmDeleteTenant === t.id ? (
+                                        <div className="flex items-center gap-1">
+                                          <button type="button" onClick={() => deleteTenant(t.id)} className="text-[9px] font-black uppercase text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-md transition-colors">Delete</button>
+                                          <button type="button" onClick={() => setConfirmDeleteTenant(null)} className="text-[9px] font-black uppercase text-slate-500 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors">Cancel</button>
+                                        </div>
+                                      ) : (
+                                        <button type="button" onClick={() => setConfirmDeleteTenant(t.id)} className="text-red-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors" title="Delete tenant">
+                                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                          </svg>
+                                        </button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </motion.section>
@@ -1371,7 +1759,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       {/* Footer */}
       <footer className="mt-12 py-8 text-center bg-white border-t border-slate-100">
         <div className="container mx-auto px-4">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.3em]">Sun Savings Bank Smart Queue System</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.3em]">Smart Queue Intelligence Platform</p>
           <div className="flex justify-center gap-6 mt-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
             <span className="hover:text-blue-900 cursor-pointer">Security Policy</span>
             <span className="hover:text-blue-900 cursor-pointer">Branch Network</span>

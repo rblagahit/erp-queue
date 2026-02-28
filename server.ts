@@ -131,6 +131,12 @@ async function startServer() {
   if (!hasColumn('admin_sessions', 'user_id')) {
     db.prepare(`ALTER TABLE admin_sessions ADD COLUMN user_id TEXT`).run();
   }
+  if (!hasColumn('users', 'name')) {
+    db.prepare(`ALTER TABLE users ADD COLUMN name TEXT DEFAULT ''`).run();
+  }
+  if (!hasColumn('tenants', 'plan')) {
+    db.prepare(`ALTER TABLE tenants ADD COLUMN plan TEXT DEFAULT 'free'`).run();
+  }
 
   // Seed default super_admin user if none exist
   const userCount = (db.prepare('SELECT COUNT(1) as c FROM users').get() as any).c as number;
@@ -176,6 +182,26 @@ async function startServer() {
     const session = db.prepare("SELECT token FROM admin_sessions WHERE token = ?").get(token);
     if (!session) return res.status(401).json({ error: "Invalid or expired session" });
     next();
+  };
+
+  const requireSuperAdmin = (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+  ) => {
+    const token = req.headers["x-admin-token"] as string;
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
+    if (!session) return res.status(401).json({ error: "Invalid or expired session" });
+    const user = db.prepare("SELECT role FROM users WHERE id = ?").get(session.user_id) as any;
+    if (!user || user.role !== 'super_admin') return res.status(403).json({ error: "Super admin access required" });
+    next();
+  };
+
+  const getUserFromToken = (token: string) => {
+    const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
+    if (!session?.user_id) return null;
+    return db.prepare("SELECT * FROM users WHERE id = ?").get(session.user_id) as any;
   };
 
   const checkIPAccess = (
@@ -328,16 +354,23 @@ async function startServer() {
     const hash = await bcrypt.hash(password, 12);
     const userId = crypto.randomUUID();
     const tenantId = crypto.randomUUID();
+    const orgName = (organization as string | undefined)?.trim() || (name as string).trim();
+    const orgSlug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
     db.prepare(
-      "INSERT INTO users (id, email, password_hash, role, tenant_id, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(userId, (email as string).toLowerCase().trim(), hash, "tenant_admin", tenantId, new Date().toISOString());
+      "INSERT INTO users (id, email, password_hash, role, tenant_id, name, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(userId, (email as string).toLowerCase().trim(), hash, "tenant_admin", tenantId, (name as string).trim(), new Date().toISOString());
+
+    db.prepare(
+      "INSERT INTO tenants (id, name, slug, settings, plan, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(tenantId, orgName, orgSlug, JSON.stringify({}), 'free', new Date().toISOString());
 
     const token = crypto.randomBytes(32).toString("hex");
     db.prepare("INSERT INTO admin_sessions (token, createdAt, user_id) VALUES (?, ?, ?)").run(
       token, new Date().toISOString(), userId
     );
 
-    res.status(201).json({ token, role: "tenant_admin", email: (email as string).toLowerCase().trim(), organization: organization || "" });
+    res.status(201).json({ token, role: "tenant_admin", email: (email as string).toLowerCase().trim(), organization: orgName });
   });
 
   app.post("/api/auth/forgot-password", async (req, res) => {
@@ -452,6 +485,120 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // ===== SMTP SETTINGS =====
+
+  app.get("/api/admin/smtp", requireAdmin, (req, res) => {
+    const user = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!user) return res.json({});
+    const tenant = db.prepare("SELECT settings FROM tenants WHERE id = ?").get(user.tenant_id) as any;
+    const settings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    const smtp = settings.smtp || {};
+    res.json({
+      host: smtp.host || '',
+      port: smtp.port || 587,
+      secure: smtp.secure || false,
+      user: smtp.auth?.user || '',
+      from: smtp.from || '',
+      to: settings.email_contact || '',
+      configured: !!(smtp.host),
+    });
+  });
+
+  app.post("/api/admin/smtp", requireAdmin, (req, res) => {
+    const { host, port, secure, user, pass, from, to } = req.body;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const tenant = db.prepare("SELECT settings FROM tenants WHERE id = ?").get(dbUser.tenant_id) as any;
+    const currentSettings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    const smtp: any = { host: host || '', port: Number(port) || 587, secure: !!secure };
+    if (user) smtp.auth = { user, pass: pass || currentSettings.smtp?.auth?.pass || '' };
+    if (from) smtp.from = from;
+    const newSettings = { ...currentSettings, smtp, email_contact: to || currentSettings.email_contact || '' };
+    db.prepare("UPDATE tenants SET settings = ? WHERE id = ?").run(JSON.stringify(newSettings), dbUser.tenant_id);
+    res.json({ status: "ok" });
+  });
+
+  // ===== PDF DOWNLOAD =====
+
+  app.get("/api/admin/report/pdf", requireAdmin, async (req, res) => {
+    const { from, to } = req.query;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    const tenantId = dbUser?.tenant_id || 'all';
+    const fromDate = (from as string) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const toDate = (to as string) || new Date().toISOString().slice(0, 10);
+    try {
+      const pdfPath = await generatePDF(tenantId, fromDate, toDate);
+      const filename = `report-${fromDate}-to-${toDate}.pdf`;
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', 'application/pdf');
+      const fileStream = fs.createReadStream(pdfPath);
+      fileStream.pipe(res);
+      fileStream.on('end', () => { try { fs.unlinkSync(pdfPath); } catch {} });
+      fileStream.on('error', () => { try { fs.unlinkSync(pdfPath); } catch {} res.status(500).end(); });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to generate PDF' });
+    }
+  });
+
+  // ===== TENANT MANAGEMENT (super_admin only) =====
+
+  app.get("/api/admin/tenants", requireSuperAdmin, (_req, res) => {
+    const tenants = db.prepare(`
+      SELECT t.id, t.name, t.slug, t.plan, t.createdAt, COUNT(u.id) as userCount
+      FROM tenants t
+      LEFT JOIN users u ON u.tenant_id = t.id
+      GROUP BY t.id
+      ORDER BY t.createdAt DESC
+    `).all();
+    res.json(tenants);
+  });
+
+  app.put("/api/admin/tenants/:id", requireSuperAdmin, (req, res) => {
+    const { name, plan } = req.body;
+    const { id } = req.params;
+    if (name) db.prepare("UPDATE tenants SET name = ? WHERE id = ?").run((name as string).trim(), id);
+    if (plan) db.prepare("UPDATE tenants SET plan = ? WHERE id = ?").run(plan, id);
+    res.json({ status: "ok" });
+  });
+
+  app.delete("/api/admin/tenants/:id", requireSuperAdmin, (req, res) => {
+    const { id } = req.params;
+    if (id === 'default') return res.status(400).json({ error: "Cannot delete the default tenant" });
+    db.prepare("DELETE FROM admin_sessions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)").run(id);
+    db.prepare("DELETE FROM users WHERE tenant_id = ?").run(id);
+    db.prepare("DELETE FROM tenants WHERE id = ?").run(id);
+    res.json({ status: "ok" });
+  });
+
+  // ===== USER MANAGEMENT (super_admin only) =====
+
+  app.get("/api/admin/users", requireSuperAdmin, (_req, res) => {
+    const users = db.prepare(`
+      SELECT u.id, u.email, u.name, u.role, u.tenant_id, u.createdAt, u.lastLoginAt,
+             t.name as tenantName
+      FROM users u
+      LEFT JOIN tenants t ON t.id = u.tenant_id
+      ORDER BY u.createdAt DESC
+    `).all();
+    res.json(users);
+  });
+
+  app.put("/api/admin/users/:id", requireSuperAdmin, (req, res) => {
+    const { role } = req.body;
+    if (!['tenant_admin', 'super_admin'].includes(role)) {
+      return res.status(400).json({ error: "Invalid role. Must be tenant_admin or super_admin" });
+    }
+    db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, req.params.id);
+    res.json({ status: "ok" });
+  });
+
+  app.delete("/api/admin/users/:id", requireSuperAdmin, (req, res) => {
+    const { id } = req.params;
+    db.prepare("DELETE FROM admin_sessions WHERE user_id = ?").run(id);
+    db.prepare("DELETE FROM users WHERE id = ?").run(id);
+    res.json({ status: "ok" });
+  });
+
   // Filtered history for admin CSV export
   app.get("/api/admin/history", requireAdmin, (req, res) => {
     const { from, to, branch } = req.query;
@@ -482,7 +629,7 @@ async function startServer() {
   };
 
   const ensureDefaultTenant = () => {
-    const count = db.prepare('SELECT COUNT(1) as c FROM tenants').get().c as number;
+    const count = (db.prepare('SELECT COUNT(1) as c FROM tenants').get() as any).c as number;
     if (count === 0) {
       db.prepare('INSERT INTO tenants (id, name, slug, settings, createdAt) VALUES (?, ?, ?, ?, ?)')
         .run('default', 'Default Tenant', 'default', JSON.stringify({ monthly_quota: 10000 }), new Date().toISOString());
