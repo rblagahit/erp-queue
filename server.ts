@@ -1037,7 +1037,7 @@ async function startServer() {
   });
 
   const generateCSV = async (tenantId: string, fromDate: string, toDate: string) => {
-    const rows = db.prepare('SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = "all") ORDER BY completedTime DESC')
+    const rows = db.prepare("SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = 'all') ORDER BY completedTime DESC")
       .all(fromDate, toDate, tenantId, tenantId) as any[];
 
     const headers = ['id','tenant_id','name','branch','service','priority','checkInTime','calledTime','completedTime'];
@@ -1060,9 +1060,9 @@ async function startServer() {
     doc.fontSize(10).text(`Period: ${fromDate} -> ${toDate}${branch && branch !== 'All' ? ` | Branch: ${branch}` : ''}`);
     doc.moveDown();
     const rows: any[] = branch && branch !== 'All'
-      ? db.prepare('SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = "all") AND branch = ? ORDER BY completedTime DESC')
+      ? db.prepare("SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = 'all') AND branch = ? ORDER BY completedTime DESC")
           .all(fromDate, toDate, tenantId, tenantId, branch) as any[]
-      : db.prepare('SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = "all") ORDER BY completedTime DESC')
+      : db.prepare("SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = 'all') ORDER BY completedTime DESC")
           .all(fromDate, toDate, tenantId, tenantId) as any[];
     for (const r of rows) {
       doc.fontSize(9).text(`${r.completedTime} | ${r.branch} | ${r.service} | ${r.name}`);
