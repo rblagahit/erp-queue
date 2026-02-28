@@ -521,13 +521,13 @@ async function startServer() {
   // ===== PDF DOWNLOAD =====
 
   app.get("/api/admin/report/pdf", requireAdmin, async (req, res) => {
-    const { from, to } = req.query;
+    const { from, to, branch } = req.query;
     const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
     const tenantId = dbUser?.tenant_id || 'all';
     const fromDate = (from as string) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const toDate = (to as string) || new Date().toISOString().slice(0, 10);
     try {
-      const pdfPath = await generatePDF(tenantId, fromDate, toDate);
+      const pdfPath = await generatePDF(tenantId, fromDate, toDate, branch as string | undefined);
       const filename = `report-${fromDate}-to-${toDate}.pdf`;
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.setHeader('Content-Type', 'application/pdf');
@@ -537,6 +537,21 @@ async function startServer() {
       fileStream.on('error', () => { try { fs.unlinkSync(pdfPath); } catch {} res.status(500).end(); });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to generate PDF' });
+    }
+  });
+
+  // ===== SEND REPORT ON-DEMAND =====
+
+  app.post("/api/admin/report/send", requireAdmin, async (req, res) => {
+    const { period } = req.body;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    const tenantId = dbUser?.tenant_id;
+    if (!tenantId) return res.status(400).json({ error: 'No tenant found' });
+    try {
+      await generateAndSendReport(tenantId, period === 'monthly' ? 'monthly' : 'daily');
+      res.json({ status: 'ok' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to send report' });
     }
   });
 
@@ -652,16 +667,19 @@ async function startServer() {
     return filePath;
   };
 
-  const generatePDF = async (tenantId: string, fromDate: string, toDate: string) => {
+  const generatePDF = async (tenantId: string, fromDate: string, toDate: string, branch?: string) => {
     const filePath = path.join(os.tmpdir(), `report-${tenantId}-${Date.now()}.pdf`);
     const doc = new PDFDocument();
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
     doc.fontSize(14).text(`Tenant Report: ${tenantId}`, { align: 'center' });
-    doc.fontSize(10).text(`Period: ${fromDate} -> ${toDate}`);
+    doc.fontSize(10).text(`Period: ${fromDate} -> ${toDate}${branch && branch !== 'All' ? ` | Branch: ${branch}` : ''}`);
     doc.moveDown();
-    const rows = db.prepare('SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = "all") ORDER BY completedTime DESC')
-      .all(fromDate, toDate, tenantId, tenantId) as any[];
+    const rows: any[] = branch && branch !== 'All'
+      ? db.prepare('SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = "all") AND branch = ? ORDER BY completedTime DESC')
+          .all(fromDate, toDate, tenantId, tenantId, branch) as any[]
+      : db.prepare('SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = "all") ORDER BY completedTime DESC')
+          .all(fromDate, toDate, tenantId, tenantId) as any[];
     for (const r of rows) {
       doc.fontSize(9).text(`${r.completedTime} | ${r.branch} | ${r.service} | ${r.name}`);
     }

@@ -87,6 +87,8 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   const [smtpFrom, setSmtpFrom] = useState('');
   const [smtpTo, setSmtpTo] = useState('');
   const [smtpSaving, setSmtpSaving] = useState(false);
+  const [reportPeriod, setReportPeriod] = useState<'daily' | 'monthly'>('daily');
+  const [sendingReport, setSendingReport] = useState(false);
 
   // Super admin — users & tenants
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
@@ -300,6 +302,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     const params = new URLSearchParams();
     if (exportFrom) params.append('from', exportFrom);
     if (exportTo) params.append('to', exportTo);
+    if (exportBranch && exportBranch !== 'All') params.append('branch', exportBranch);
     try {
       const res = await fetch(`/api/admin/report/pdf?${params}`, { headers: { 'x-admin-token': adminToken } });
       if (!res.ok) { showNotification('Failed to generate PDF.', true); return; }
@@ -312,6 +315,24 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       URL.revokeObjectURL(url);
     } catch {
       showNotification('Failed to download PDF. Check connection.', true);
+    }
+  };
+
+  const sendTestReport = async () => {
+    if (!adminToken) return;
+    setSendingReport(true);
+    try {
+      const res = await fetch('/api/admin/report/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ period: reportPeriod }),
+      });
+      if (res.ok) showNotification(`${reportPeriod === 'monthly' ? 'Monthly' : 'Daily'} report sent successfully.`);
+      else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Failed to send report.', true); }
+    } catch {
+      showNotification('Failed to send report. Check connection.', true);
+    } finally {
+      setSendingReport(false);
     }
   };
 
@@ -1509,6 +1530,32 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                           {smtpSaving ? 'Saving…' : 'Save SMTP Settings'}
                         </button>
                       </form>
+
+                      <div className="border-t pt-4 space-y-3">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 block mb-2">Send Report Period</label>
+                          <div className="flex rounded-lg overflow-hidden border border-slate-200">
+                            <button
+                              type="button"
+                              onClick={() => setReportPeriod('daily')}
+                              className={`flex-1 py-2 text-xs font-bold uppercase transition-all ${reportPeriod === 'daily' ? 'bg-[#003366] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
+                            >Daily</button>
+                            <button
+                              type="button"
+                              onClick={() => setReportPeriod('monthly')}
+                              className={`flex-1 py-2 text-xs font-bold uppercase transition-all ${reportPeriod === 'monthly' ? 'bg-[#003366] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
+                            >Monthly</button>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={sendTestReport}
+                          disabled={sendingReport}
+                          className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-40"
+                        >
+                          {sendingReport ? 'Sending…' : 'Send Test Report Now'}
+                        </button>
+                      </div>
                     </div>
 
                     {/* API KEY PANEL */}
