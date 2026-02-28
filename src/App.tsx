@@ -35,7 +35,11 @@ const SERVICES = [
   "Cash/Check Deposit", "Withdrawal", "Account Opening", "Customer Service", "Loans"
 ];
 
-export default function App() {
+interface AppProps {
+  onGoToLanding?: () => void;
+}
+
+export default function App({ onGoToLanding }: AppProps = {}) {
   const [view, setView] = useState<'client' | 'teller' | 'analytics' | 'admin'>('teller');
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [history, setHistory] = useState<QueueEntry[]>([]);
@@ -47,8 +51,18 @@ export default function App() {
 
   // Admin state
   const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminLoginError, setAdminLoginError] = useState<string | null>(null);
+
+  // Auth flow state
+  const [authView, setAuthView] = useState<'login' | 'forgot' | 'reset'>('login');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
+  const [resetToken, setResetToken] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirm, setResetConfirm] = useState('');
+  const [resetSuccess, setResetSuccess] = useState(false);
   const [ipList, setIpList] = useState<IPEntry[]>([]);
   const [newIP, setNewIP] = useState('');
   const [newIPLabel, setNewIPLabel] = useState('');
@@ -120,6 +134,18 @@ export default function App() {
           else localStorage.removeItem('adminToken');
         })
         .catch(() => localStorage.removeItem('adminToken'));
+    }
+  }, []);
+
+  // Detect password reset token in URL on load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const rt = params.get('reset_token');
+    if (rt) {
+      setResetToken(rt);
+      setView('admin');
+      setAuthView('reset');
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
 
@@ -207,20 +233,69 @@ export default function App() {
       const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: adminPassword })
+        body: JSON.stringify({ email: adminEmail, password: adminPassword })
       });
       if (res.ok) {
         const { token } = await res.json();
         setAdminToken(token);
         localStorage.setItem('adminToken', token);
+        setAdminEmail('');
         setAdminPassword('');
         loadIPs(token);
         loadSettings(token);
       } else {
-        setAdminLoginError('Invalid password. Please try again.');
+        const err = await res.json().catch(() => ({}));
+        setAdminLoginError(err.error || 'Invalid email or password. Please try again.');
       }
     } catch {
       setAdminLoginError('Login failed. Please check your connection.');
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail })
+      });
+    } catch { /* silent — always show success */ }
+    setForgotSent(true);
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminLoginError(null);
+    if (resetNewPassword !== resetConfirm) {
+      setAdminLoginError('Passwords do not match.');
+      return;
+    }
+    if (resetNewPassword.length < 8) {
+      setAdminLoginError('Password must be at least 8 characters.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: resetToken, password: resetNewPassword })
+      });
+      if (res.ok) {
+        setResetSuccess(true);
+        setTimeout(() => {
+          setAuthView('login');
+          setResetSuccess(false);
+          setResetNewPassword('');
+          setResetConfirm('');
+          setResetToken('');
+        }, 3000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setAdminLoginError(err.error || 'Reset failed. The link may have expired.');
+      }
+    } catch {
+      setAdminLoginError('Reset failed. Please check your connection.');
     }
   };
 
@@ -487,10 +562,17 @@ export default function App() {
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="px-8 h-20 flex justify-between items-center">
           <div className="flex flex-col">
-            <h1 className="font-bold text-xl text-[#003366] leading-none uppercase tracking-tight">
-              Sun Savings <span className="text-amber-500 font-extrabold">Bank</span>
-            </h1>
-            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Smart Queue Intelligence</p>
+            <button
+              type="button"
+              onClick={onGoToLanding}
+              className="text-left group"
+              title="Back to home"
+            >
+              <h1 className="font-bold text-xl text-[#003366] leading-none uppercase tracking-tight group-hover:text-[#002244] transition-colors">
+                Sun Savings <span className="text-amber-500 font-extrabold">Bank</span>
+              </h1>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Smart Queue Intelligence</p>
+            </button>
           </div>
 
           <div className="hidden md:flex gap-10">
@@ -858,7 +940,6 @@ export default function App() {
           {view === 'admin' && (
             <motion.section key="admin" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
               {!adminToken ? (
-                /* Login Form */
                 <div className="max-w-sm mx-auto white-card rounded-[2.5rem] p-10 md:p-14">
                   <div className="text-center mb-8">
                     <div className="inline-flex items-center justify-center w-14 h-14 bg-[#003366] rounded-2xl mb-4 mx-auto">
@@ -866,28 +947,150 @@ export default function App() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                       </svg>
                     </div>
-                    <h2 className="text-2xl font-extrabold text-[#003366]">Admin Access</h2>
-                    <p className="text-slate-500 mt-2 text-sm">Restricted to authorized personnel only.</p>
+                    <h2 className="text-2xl font-extrabold text-[#003366]">
+                      {authView === 'login' ? 'Admin Access' : authView === 'forgot' ? 'Reset Password' : 'Set New Password'}
+                    </h2>
+                    <p className="text-slate-500 mt-2 text-sm">
+                      {authView === 'login' ? 'Restricted to authorized personnel only.' : authView === 'forgot' ? 'Enter your email to receive a reset link.' : 'Choose a new password for your account.'}
+                    </p>
                   </div>
-                  <form onSubmit={adminLogin} className="space-y-5">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Admin Password</label>
-                      <input
-                        type="password"
-                        value={adminPassword}
-                        onChange={e => setAdminPassword(e.target.value)}
-                        placeholder="Enter admin password"
-                        required
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-amber-400 outline-none transition-all"
-                      />
+
+                  {/* LOGIN FORM */}
+                  {authView === 'login' && (
+                    <form onSubmit={adminLogin} className="space-y-5">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Email Address</label>
+                        <input
+                          type="email"
+                          value={adminEmail}
+                          onChange={e => setAdminEmail(e.target.value)}
+                          placeholder="admin@ssb.local"
+                          required
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Password</label>
+                        <input
+                          type="password"
+                          value={adminPassword}
+                          onChange={e => setAdminPassword(e.target.value)}
+                          placeholder="Enter your password"
+                          required
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                        />
+                      </div>
+                      {adminLoginError && (
+                        <p className="text-red-500 text-xs font-bold bg-red-50 border border-red-100 rounded-lg px-3 py-2">{adminLoginError}</p>
+                      )}
+                      <button type="submit" className="w-full py-4 btn-primary rounded-xl font-bold text-sm uppercase tracking-widest shadow-lg shadow-blue-900/20">
+                        Sign In
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setAuthView('forgot'); setAdminLoginError(null); setForgotSent(false); setForgotEmail(''); }}
+                        className="w-full text-center text-[11px] font-bold text-slate-400 hover:text-[#003366] transition-colors pt-1"
+                      >
+                        Forgot your password?
+                      </button>
+                    </form>
+                  )}
+
+                  {/* FORGOT PASSWORD FORM */}
+                  {authView === 'forgot' && (
+                    <div className="space-y-5">
+                      {forgotSent ? (
+                        <div className="text-center space-y-4">
+                          <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 rounded-full mx-auto">
+                            <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                          <p className="text-sm font-bold text-slate-700">Check your email</p>
+                          <p className="text-xs text-slate-500">If an account exists for <span className="font-bold text-[#003366]">{forgotEmail}</span>, a reset link has been sent. Check your inbox.</p>
+                          <button
+                            type="button"
+                            onClick={() => { setAuthView('login'); setForgotSent(false); setForgotEmail(''); }}
+                            className="w-full py-3 border border-slate-200 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors uppercase tracking-widest"
+                          >
+                            Back to Sign In
+                          </button>
+                        </div>
+                      ) : (
+                        <form onSubmit={handleForgotPassword} className="space-y-5">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Email Address</label>
+                            <input
+                              type="email"
+                              value={forgotEmail}
+                              onChange={e => setForgotEmail(e.target.value)}
+                              placeholder="admin@ssb.local"
+                              required
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                            />
+                          </div>
+                          <button type="submit" className="w-full py-4 btn-primary rounded-xl font-bold text-sm uppercase tracking-widest shadow-lg shadow-blue-900/20">
+                            Send Reset Link
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setAuthView('login'); setAdminLoginError(null); }}
+                            className="w-full text-center text-[11px] font-bold text-slate-400 hover:text-[#003366] transition-colors pt-1"
+                          >
+                            Back to Sign In
+                          </button>
+                        </form>
+                      )}
                     </div>
-                    {adminLoginError && (
-                      <p className="text-red-500 text-xs font-bold bg-red-50 border border-red-100 rounded-lg px-3 py-2">{adminLoginError}</p>
-                    )}
-                    <button type="submit" className="w-full py-4 btn-primary rounded-xl font-bold text-sm uppercase tracking-widest shadow-lg shadow-blue-900/20">
-                      Sign In to Admin
-                    </button>
-                  </form>
+                  )}
+
+                  {/* RESET PASSWORD FORM */}
+                  {authView === 'reset' && (
+                    <div className="space-y-5">
+                      {resetSuccess ? (
+                        <div className="text-center space-y-4">
+                          <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 rounded-full mx-auto">
+                            <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                          <p className="text-sm font-bold text-slate-700">Password updated!</p>
+                          <p className="text-xs text-slate-500">Redirecting to sign in...</p>
+                        </div>
+                      ) : (
+                        <form onSubmit={handleResetPassword} className="space-y-5">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">New Password</label>
+                            <input
+                              type="password"
+                              value={resetNewPassword}
+                              onChange={e => setResetNewPassword(e.target.value)}
+                              placeholder="Minimum 8 characters"
+                              required
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Confirm Password</label>
+                            <input
+                              type="password"
+                              value={resetConfirm}
+                              onChange={e => setResetConfirm(e.target.value)}
+                              placeholder="Repeat new password"
+                              required
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                            />
+                          </div>
+                          {adminLoginError && (
+                            <p className="text-red-500 text-xs font-bold bg-red-50 border border-red-100 rounded-lg px-3 py-2">{adminLoginError}</p>
+                          )}
+                          <button type="submit" className="w-full py-4 btn-primary rounded-xl font-bold text-sm uppercase tracking-widest shadow-lg shadow-blue-900/20">
+                            Set New Password
+                          </button>
+                        </form>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* Admin Panel — authenticated */

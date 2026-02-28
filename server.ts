@@ -5,6 +5,7 @@ import express from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import Database from "better-sqlite3";
+import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -21,8 +22,6 @@ const writeFile = promisify(fs.writeFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "SSBAdmin2025!";
 
 const VALID_BRANCHES = new Set([
   "Carcar Branch", "Moalboal Branch", "Talisay Branch", "Carbon Branch",
@@ -45,7 +44,7 @@ async function startServer() {
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server is live on port ${PORT}`);
     if (!process.env.ADMIN_PASSWORD) {
-      console.warn(`[ADMIN] Warning: Using default password. Set ADMIN_PASSWORD env var for production.`);
+      console.warn(`[ADMIN] Warning: Using default admin password. Set ADMIN_EMAIL and ADMIN_PASSWORD env vars for production.`);
     }
   });
 
@@ -88,7 +87,20 @@ async function startServer() {
 
     CREATE TABLE IF NOT EXISTS admin_sessions (
       token TEXT PRIMARY KEY,
-      createdAt TEXT
+      createdAt TEXT,
+      user_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'tenant_admin',
+      tenant_id TEXT DEFAULT 'default',
+      createdAt TEXT,
+      lastLoginAt TEXT,
+      reset_token TEXT,
+      reset_token_expiry TEXT
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -115,6 +127,21 @@ async function startServer() {
   }
   if (!hasColumn('history', 'tenant_id')) {
     db.prepare(`ALTER TABLE history ADD COLUMN tenant_id TEXT DEFAULT 'default'`).run();
+  }
+  if (!hasColumn('admin_sessions', 'user_id')) {
+    db.prepare(`ALTER TABLE admin_sessions ADD COLUMN user_id TEXT`).run();
+  }
+
+  // Seed default super_admin user if none exist
+  const userCount = (db.prepare('SELECT COUNT(1) as c FROM users').get() as any).c as number;
+  if (userCount === 0) {
+    const email = process.env.ADMIN_EMAIL || 'admin@ssb.local';
+    const rawPassword = process.env.ADMIN_PASSWORD || 'SSBAdmin2025!';
+    const hash = await bcrypt.hash(rawPassword, 12);
+    db.prepare(
+      'INSERT INTO users (id, email, password_hash, role, tenant_id, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(crypto.randomUUID(), email, hash, 'super_admin', 'default', new Date().toISOString());
+    console.log(`[AUTH] Seeded default admin: ${email}`);
   }
 
   // Clean expired sessions on startup and hourly thereafter
@@ -226,7 +253,7 @@ async function startServer() {
   const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
   const LOGIN_MAX_ATTEMPTS = 5;
 
-  app.post("/api/admin/login", (req, res) => {
+  app.post("/api/admin/login", async (req, res) => {
     const ip = getClientIP(req);
     const now = Date.now();
     const rec = loginAttempts.get(ip);
@@ -240,20 +267,28 @@ async function startServer() {
       loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
     }
 
-    const { password } = req.body;
-    if (!password || password !== ADMIN_PASSWORD) {
-      return res.status(401).json({ error: "Invalid password" });
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
     }
 
-    // Clear rate limit on successful login
+    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(
+      (email as string).toLowerCase().trim()
+    ) as any;
+
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
     loginAttempts.delete(ip);
 
     const token = crypto.randomBytes(32).toString("hex");
-    db.prepare("INSERT INTO admin_sessions (token, createdAt) VALUES (?, ?)").run(
-      token,
-      new Date().toISOString()
+    db.prepare("INSERT INTO admin_sessions (token, createdAt, user_id) VALUES (?, ?, ?)").run(
+      token, new Date().toISOString(), user.id
     );
-    res.json({ token });
+    db.prepare("UPDATE users SET lastLoginAt = ? WHERE id = ?").run(new Date().toISOString(), user.id);
+
+    res.json({ token, role: user.role, email: user.email });
   });
 
   app.post("/api/admin/logout", requireAdmin, (req, res) => {
@@ -264,6 +299,74 @@ async function startServer() {
 
   app.get("/api/admin/verify", requireAdmin, (_req, res) => {
     res.json({ valid: true });
+  });
+
+  app.get("/api/auth/me", requireAdmin, (req, res) => {
+    const token = req.headers["x-admin-token"] as string;
+    const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
+    if (!session?.user_id) return res.json({ role: 'super_admin', email: 'legacy' });
+    const user = db.prepare("SELECT id, email, role, tenant_id FROM users WHERE id = ?").get(session.user_id) as any;
+    res.json(user || { role: 'super_admin', email: 'unknown' });
+  });
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(
+      (email as string).toLowerCase().trim()
+    ) as any;
+
+    // Always return ok to prevent user enumeration
+    if (!user) return res.json({ status: "ok" });
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const expiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    db.prepare("UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?")
+      .run(resetToken, expiry, user.id);
+
+    const appUrl = process.env.APP_URL || "https://erp-queue-production.up.railway.app";
+    const resetLink = `${appUrl}/?reset_token=${resetToken}`;
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || "localhost",
+        port: Number(process.env.SMTP_PORT || 25),
+        secure: process.env.SMTP_SECURE === "true",
+        auth: process.env.SMTP_USER
+          ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          : undefined,
+      });
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM || "no-reply@ssb.local",
+        to: user.email,
+        subject: "Password Reset Request",
+        text: `You requested a password reset.\n\nClick the link below to reset your password (valid for 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`,
+      });
+    } catch (err) {
+      console.error("[AUTH] Failed to send reset email:", err);
+    }
+
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    const { token, password } = req.body;
+    if (!token || !password) return res.status(400).json({ error: "Token and password are required" });
+    if ((password as string).length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
+
+    const user = db.prepare("SELECT * FROM users WHERE reset_token = ?").get(token) as any;
+    if (!user) return res.status(400).json({ error: "Invalid or expired reset link" });
+    if (new Date(user.reset_token_expiry) < new Date()) {
+      return res.status(400).json({ error: "Reset link has expired. Please request a new one." });
+    }
+
+    const hash = await bcrypt.hash(password, 12);
+    db.prepare("UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?")
+      .run(hash, user.id);
+    db.prepare("DELETE FROM admin_sessions WHERE user_id = ?").run(user.id);
+
+    res.json({ status: "ok" });
   });
 
   // Returns the calling client's IP address

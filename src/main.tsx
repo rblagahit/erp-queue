@@ -1,6 +1,7 @@
-import { StrictMode, ReactNode, useState } from 'react';
+import { StrictMode, ReactNode, useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import Landing from './Landing.tsx';
 import './index.css';
 
 function ErrorBoundaryFallback({ error, resetError }: { error: Error | null; resetError: () => void }) {
@@ -47,10 +48,30 @@ export function ErrorBoundary({ children }: ErrorBoundaryProps) {
   }
 }
 
+function Root() {
+  const [page, setPage] = useState<'landing' | 'app'>('landing');
+
+  // If a valid admin session already exists in localStorage, skip the landing page
+  useEffect(() => {
+    const stored = localStorage.getItem('adminToken');
+    if (stored) {
+      fetch('/api/admin/verify', { headers: { 'x-admin-token': stored } })
+        .then(res => { if (res.ok) setPage('app'); })
+        .catch(() => {});
+    }
+    // If a reset_token is in the URL, stay on landing so the modal can handle it
+  }, []);
+
+  if (page === 'app') {
+    return <App onGoToLanding={() => setPage('landing')} />;
+  }
+  return <Landing onEnterApp={() => setPage('app')} />;
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <Root />
     </ErrorBoundary>
   </StrictMode>,
 );
