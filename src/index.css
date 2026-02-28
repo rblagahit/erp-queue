@@ -96,3 +96,14 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+@keyframes sq-ticker {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.sq-ticker {
+  animation: sq-ticker 28s linear infinite;
+  width: max-content;
+  will-change: transform;
+}

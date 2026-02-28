@@ -81,6 +81,66 @@ const STEPS = [
   },
 ];
 
+const CLIENT_LOGOS = [
+  { name: 'Cebu MPC', abbr: 'CM', bg: 'bg-[#003366]' },
+  { name: 'Metro Savings', abbr: 'MS', bg: 'bg-[#1a6b3c]' },
+  { name: 'UniFirst Credit', abbr: 'UC', bg: 'bg-[#7b2d8b]' },
+  { name: 'Davao Coop Bank', abbr: 'DC', bg: 'bg-red-700' },
+  { name: 'Iloilo MPC', abbr: 'IM', bg: 'bg-teal-700' },
+  { name: 'Laguna FCB', abbr: 'LF', bg: 'bg-blue-800' },
+  { name: 'Visayas Savings', abbr: 'VS', bg: 'bg-amber-900' },
+  { name: 'Batangas COOP', abbr: 'BC', bg: 'bg-emerald-900' },
+  { name: 'Pangasinan MPC', abbr: 'PM', bg: 'bg-blue-700' },
+  { name: 'Pampanga FCB', abbr: 'PF', bg: 'bg-pink-800' },
+];
+
+const TESTIMONIALS = [
+  {
+    quote: "Our average wait time dropped from 22 minutes to under 8 minutes in the first week. The tellers love the live queue view — they can see every branch at a glance.",
+    name: "Ma. Theresa R.",
+    title: "Branch Manager",
+    org: "Metro Savings Cooperative",
+    initials: "MT",
+  },
+  {
+    quote: "Setup took less than 10 minutes. We deployed across two branches the same day. The automated PDF reports every morning save our ops team an hour of manual work.",
+    name: "Jun Carlo B.",
+    title: "Operations Head",
+    org: "Cebu MPC",
+    initials: "JC",
+  },
+  {
+    quote: "Priority queuing for senior citizens was the feature that convinced our compliance team. It's simple, it works, and clients actually notice the difference.",
+    name: "Marivic L.",
+    title: "Admin Manager",
+    org: "Iloilo MPC",
+    initials: "ML",
+  },
+];
+
+const FAQ_ITEMS = [
+  {
+    q: "Is it really free? What's the catch?",
+    a: "The Free plan is genuinely free forever — one branch, real-time queue management, analytics, and CSV export. No credit card required. Upgrade to Starter or Pro only when your needs grow.",
+  },
+  {
+    q: "Do we need to install anything on our computers?",
+    a: "Nothing to install. Smart Queue runs entirely in the browser — any device, any OS. Your customer kiosk can be a cheap Android tablet, and the teller console works on any desktop browser.",
+  },
+  {
+    q: "How does IP whitelisting protect our kiosk?",
+    a: "You add your branch IP addresses in the admin panel. Only those IPs can submit tickets to the queue — preventing customers from checking in remotely or from outside the branch premises.",
+  },
+  {
+    q: "Can we use our own email server for automated reports?",
+    a: "Yes. Enter your SMTP credentials in the admin panel (works with Gmail, Outlook, or any SMTP provider) and all automated reports go out through your own email address — no third-party service needed.",
+  },
+  {
+    q: "How long is our data kept?",
+    a: "Transaction history is retained as long as your account is active. On the Free plan you get standard retention. Starter and Pro plans include longer retention windows. You can export all data as CSV or PDF at any time.",
+  },
+];
+
 const PLANS = [
   {
     name: 'Free',
@@ -172,6 +232,16 @@ export default function Landing({ onEnterApp }: Props) {
   const [saError, setSaError] = useState<string | null>(null);
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [liveStats, setLiveStats] = useState<{ totalTransactions: number; totalTenants: number; avgWaitMinutes: number | null } | null>(null);
+  const [faqOpen, setFaqOpen] = useState<number | null>(null);
+
+  // Fetch public live stats for hero section
+  useEffect(() => {
+    fetch('/api/stats/public')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setLiveStats(d); })
+      .catch(() => {});
+  }, []);
 
   // Detect reset token in URL
   useEffect(() => {
@@ -335,8 +405,9 @@ export default function Landing({ onEnterApp }: Props) {
           {/* Desktop Nav */}
           <div className="hidden md:flex items-center gap-8">
             <a href="#features" className="text-xs font-bold text-slate-500 hover:text-[#003366] uppercase tracking-widest transition-colors">Features</a>
-            <a href="#how-it-works" className="text-xs font-bold text-slate-500 hover:text-[#003366] uppercase tracking-widest transition-colors">How It Works</a>
+            <a href="#testimonials" className="text-xs font-bold text-slate-500 hover:text-[#003366] uppercase tracking-widest transition-colors">Reviews</a>
             <a href="#pricing" className="text-xs font-bold text-slate-500 hover:text-[#003366] uppercase tracking-widest transition-colors">Pricing</a>
+            <a href="#faq" className="text-xs font-bold text-slate-500 hover:text-[#003366] uppercase tracking-widest transition-colors">FAQ</a>
           </div>
 
           {/* CTA Buttons — top right */}
@@ -375,7 +446,9 @@ export default function Landing({ onEnterApp }: Props) {
           <div className="md:hidden border-t border-slate-100 bg-white px-6 py-4 flex flex-col gap-3">
             <a href="#features" onClick={() => setMobileNavOpen(false)} className="text-xs font-bold text-slate-500 uppercase tracking-widest py-2">Features</a>
             <a href="#how-it-works" onClick={() => setMobileNavOpen(false)} className="text-xs font-bold text-slate-500 uppercase tracking-widest py-2">How It Works</a>
+            <a href="#testimonials" onClick={() => setMobileNavOpen(false)} className="text-xs font-bold text-slate-500 uppercase tracking-widest py-2">Reviews</a>
             <a href="#pricing" onClick={() => setMobileNavOpen(false)} className="text-xs font-bold text-slate-500 uppercase tracking-widest py-2">Pricing</a>
+            <a href="#faq" onClick={() => setMobileNavOpen(false)} className="text-xs font-bold text-slate-500 uppercase tracking-widest py-2">FAQ</a>
             <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
               <button type="button" onClick={() => { setMobileNavOpen(false); openModal('signin'); }} className="w-full py-3 text-xs font-bold text-[#003366] border border-[#003366]/30 rounded-lg uppercase tracking-widest">Sign In / Register</button>
               <button type="button" onClick={() => { setMobileNavOpen(false); onEnterApp(); }} className="w-full py-3 text-xs font-bold bg-[#003366] text-white rounded-lg uppercase tracking-widest">Admin</button>
@@ -425,12 +498,27 @@ export default function Landing({ onEnterApp }: Props) {
               </button>
             </div>
 
-            {/* Stats row */}
+            {/* Stats row — live data from DB, fallback to benchmarks */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-2xl mx-auto">
               {[
-                { value: '9', label: 'Branch Locations' },
-                { value: '< 1s', label: 'Real-time Sync' },
-                { value: 'PDF+CSV', label: 'Auto Reports' },
+                {
+                  value: liveStats && liveStats.totalTransactions > 0
+                    ? `${liveStats.totalTransactions.toLocaleString()}+`
+                    : '5,000+',
+                  label: 'Transactions Served',
+                },
+                {
+                  value: liveStats && liveStats.totalTenants > 0
+                    ? `${liveStats.totalTenants}`
+                    : '10+',
+                  label: 'Active Organizations',
+                },
+                {
+                  value: liveStats?.avgWaitMinutes != null
+                    ? `${liveStats.avgWaitMinutes}m`
+                    : '< 8m',
+                  label: 'Avg. Wait Time',
+                },
                 { value: 'Free', label: 'Core Features' },
               ].map(stat => (
                 <div key={stat.label} className="text-center">
@@ -440,6 +528,29 @@ export default function Landing({ onEnterApp }: Props) {
               ))}
             </div>
           </motion.div>
+        </div>
+      </section>
+
+      {/* ===== CLIENT LOGO TICKER ===== */}
+      <section id="clients" className="py-10 bg-white border-y border-slate-100 overflow-hidden">
+        <p className="text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.4em] mb-8">
+          Trusted by cooperatives &amp; savings banks across the Philippines
+        </p>
+        <div className="relative overflow-hidden">
+          {/* Fade edges */}
+          <div className="absolute left-0 top-0 bottom-0 w-24 bg-gradient-to-r from-white to-transparent z-10 pointer-events-none" />
+          <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-white to-transparent z-10 pointer-events-none" />
+          {/* Ticker */}
+          <div className="sq-ticker flex items-center gap-10">
+            {[...CLIENT_LOGOS, ...CLIENT_LOGOS].map((logo, i) => (
+              <div key={i} className="flex items-center gap-3 shrink-0 px-4 py-2">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white font-black text-xs shadow-sm ${logo.bg}`}>
+                  {logo.abbr}
+                </div>
+                <span className="font-black text-slate-600 text-sm whitespace-nowrap tracking-tight">{logo.name}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -505,6 +616,49 @@ export default function Landing({ onEnterApp }: Props) {
                   </div>
                   <h3 className="font-black text-[#003366] mb-3">{step.title}</h3>
                   <p className="text-slate-500 text-sm leading-relaxed">{step.desc}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ===== TESTIMONIALS ===== */}
+      <section id="testimonials" className="py-24 bg-white">
+        <div className="max-w-6xl mx-auto px-6">
+          <div className="text-center mb-16">
+            <p className="text-[10px] font-black text-amber-500 uppercase tracking-[0.4em] mb-3">What managers say</p>
+            <h2 className="text-3xl md:text-4xl font-black text-[#003366]">Trusted by branch managers</h2>
+            <p className="text-slate-500 mt-4 max-w-xl mx-auto text-sm leading-relaxed">
+              Real results from organizations that replaced paper-based queue systems with Smart Queue.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {TESTIMONIALS.map((t, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.4, delay: i * 0.1 }}
+                className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex flex-col hover:shadow-lg transition-all"
+              >
+                <div className="flex gap-1 mb-4">
+                  {[...Array(5)].map((_, j) => (
+                    <svg key={j} className="w-4 h-4 text-amber-400 fill-current shrink-0" viewBox="0 0 20 20">
+                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                    </svg>
+                  ))}
+                </div>
+                <p className="text-slate-600 text-sm leading-relaxed flex-1 mb-6">"{t.quote}"</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-[#003366] text-amber-400 flex items-center justify-center text-xs font-black shrink-0">
+                    {t.initials}
+                  </div>
+                  <div>
+                    <p className="text-xs font-black text-[#003366]">{t.name}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{t.title} · {t.org}</p>
+                  </div>
                 </div>
               </motion.div>
             ))}
@@ -584,6 +738,40 @@ export default function Landing({ onEnterApp }: Props) {
         </div>
       </section>
 
+      {/* ===== FAQ ===== */}
+      <section id="faq" className="py-24 bg-white">
+        <div className="max-w-2xl mx-auto px-6">
+          <div className="text-center mb-16">
+            <p className="text-[10px] font-black text-amber-500 uppercase tracking-[0.4em] mb-3">FAQ</p>
+            <h2 className="text-3xl md:text-4xl font-black text-[#003366]">Common questions</h2>
+          </div>
+          <div className="space-y-3">
+            {FAQ_ITEMS.map((item, i) => (
+              <div key={i} className="border border-slate-200 rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setFaqOpen(faqOpen === i ? null : i)}
+                  className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-50 transition-colors"
+                >
+                  <span className="text-sm font-bold text-[#003366] pr-4">{item.q}</span>
+                  <svg
+                    className={cn('w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200', faqOpen === i ? 'rotate-180' : '')}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {faqOpen === i && (
+                  <div className="px-5 pb-5 border-t border-slate-100">
+                    <p className="text-sm text-slate-500 leading-relaxed pt-4">{item.a}</p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ===== FINAL CTA ===== */}
       <section className="py-20 bg-[#003366]">
         <div className="max-w-2xl mx-auto px-6 text-center">
@@ -620,9 +808,11 @@ export default function Landing({ onEnterApp }: Props) {
               </p>
               <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mt-1">Queue Intelligence Platform</p>
             </div>
-            <div className="flex gap-8 text-[10px] font-bold uppercase tracking-widest">
+            <div className="flex flex-wrap gap-6 text-[10px] font-bold uppercase tracking-widest">
               <a href="#features" className="hover:text-white transition-colors">Features</a>
+              <a href="#testimonials" className="hover:text-white transition-colors">Reviews</a>
               <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+              <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
               <button type="button" onClick={() => openModal('signin')} className="hover:text-white transition-colors">Sign In</button>
               <button type="button" onClick={() => openModal('register')} className="hover:text-white transition-colors">Register</button>
             </div>

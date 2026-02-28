@@ -768,6 +768,21 @@ async function startServer() {
     }
   });
 
+  // ===== PUBLIC STATS (for landing page) =====
+
+  app.get("/api/stats/public", (_req, res) => {
+    const totalTx = (db.prepare("SELECT COUNT(*) as c FROM history").get() as any).c as number;
+    const totalTenants = (db.prepare("SELECT COUNT(*) as c FROM tenants WHERE id != 'default'").get() as any).c as number;
+    const avgWaitRow = db.prepare(
+      "SELECT AVG((julianday(calledTime) - julianday(checkInTime)) * 24 * 60) as avg FROM history WHERE calledTime IS NOT NULL AND calledTime != '' AND checkInTime IS NOT NULL"
+    ).get() as any;
+    res.json({
+      totalTransactions: totalTx,
+      totalTenants,
+      avgWaitMinutes: avgWaitRow?.avg ? Math.round(avgWaitRow.avg * 10) / 10 : null,
+    });
+  });
+
   // ===== QUEUE API ROUTES =====
 
   app.get("/api/queue", (req, res) => {
