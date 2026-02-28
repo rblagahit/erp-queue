@@ -242,6 +242,12 @@ async function startServer() {
     return db.prepare("SELECT * FROM users WHERE id = ?").get(session.user_id) as any;
   };
 
+  const canAccessTenant = (user: any, tenantId: string) => {
+    if (!user) return false;
+    if (user.role === "super_admin") return true;
+    return user.tenant_id === tenantId;
+  };
+
   const normalizeNameList = (items: unknown): string[] => {
     if (!Array.isArray(items)) return [];
     const seen = new Set<string>();
@@ -614,7 +620,9 @@ async function startServer() {
     const token = req.headers["x-admin-token"] as string | undefined;
     const user = token ? getUserFromToken(token) : null;
     const requestedTenantId = typeof req.query.tenant_id === "string" ? req.query.tenant_id : null;
-    const tenantId = requestedTenantId || user?.tenant_id || "default";
+    const tenantId = requestedTenantId && user?.role === "super_admin"
+      ? requestedTenantId
+      : user?.tenant_id || requestedTenantId || "default";
     const tenantExists = db.prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as any;
     const effectiveTenantId = tenantExists?.id || "default";
     ensureTenantCatalog(effectiveTenantId);
@@ -811,8 +819,15 @@ async function startServer() {
   // Filtered history for admin CSV export
   app.get("/api/admin/history", requireAdmin, (req, res) => {
     const { from, to, branch } = req.query;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
     let query = "SELECT * FROM history WHERE 1=1";
     const params: string[] = [];
+
+    if (dbUser.role !== "super_admin") {
+      query += " AND tenant_id = ?";
+      params.push(dbUser.tenant_id);
+    }
 
     if (from) {
       query += " AND date(completedTime) >= date(?)";
@@ -1006,6 +1021,11 @@ async function startServer() {
   // Tenant report trigger (admin) - generates CSV and PDF and emails to tenant contact
   app.post('/api/tenants/:id/report', requireAdmin, async (req, res) => {
     const tenantId = req.params.id;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    if (!canAccessTenant(dbUser, tenantId)) {
+      return res.status(403).json({ error: "Access denied for this tenant" });
+    }
     const period = req.query.period === 'monthly' ? 'monthly' : 'daily';
     try {
       await generateAndSendReport(tenantId, period as 'daily' | 'monthly');
@@ -1033,28 +1053,30 @@ async function startServer() {
 
   // ===== QUEUE API ROUTES =====
 
-  app.get("/api/queue", (req, res) => {
-    const token = req.headers["x-admin-token"] as string | undefined;
-    const user = token ? getUserFromToken(token) : null;
-    const rows = user?.tenant_id
-      ? db.prepare("SELECT * FROM queue WHERE tenant_id = ? ORDER BY CASE WHEN priority='Priority' THEN 0 ELSE 1 END, checkInTime ASC").all(user.tenant_id)
-      : db.prepare("SELECT * FROM queue ORDER BY CASE WHEN priority='Priority' THEN 0 ELSE 1 END, checkInTime ASC").all();
+  app.get("/api/queue", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const rows = dbUser.role === "super_admin"
+      ? db.prepare("SELECT * FROM queue ORDER BY CASE WHEN priority='Priority' THEN 0 ELSE 1 END, checkInTime ASC").all()
+      : db.prepare("SELECT * FROM queue WHERE tenant_id = ? ORDER BY CASE WHEN priority='Priority' THEN 0 ELSE 1 END, checkInTime ASC").all(dbUser.tenant_id);
     res.json(rows);
   });
 
   // No LIMIT — analytics need complete history
-  app.get("/api/history", (req, res) => {
-    const token = req.headers["x-admin-token"] as string | undefined;
-    const user = token ? getUserFromToken(token) : null;
-    const rows = user?.tenant_id
-      ? db.prepare("SELECT * FROM history WHERE tenant_id = ? ORDER BY completedTime DESC").all(user.tenant_id)
-      : db.prepare("SELECT * FROM history ORDER BY completedTime DESC").all();
+  app.get("/api/history", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const rows = dbUser.role === "super_admin"
+      ? db.prepare("SELECT * FROM history ORDER BY completedTime DESC").all()
+      : db.prepare("SELECT * FROM history WHERE tenant_id = ? ORDER BY completedTime DESC").all(dbUser.tenant_id);
     res.json(rows);
   });
 
   // IP-protected: only whitelisted IPs can add to the queue
   app.post("/api/queue", checkIPAccess, (req, res) => {
     const entry = req.body;
+    const token = req.headers["x-admin-token"] as string | undefined;
+    const user = token ? getUserFromToken(token) : null;
 
     // Validate all fields
     if (!entry.name || typeof entry.name !== "string" || entry.name.trim().length === 0) {
@@ -1064,7 +1086,11 @@ async function startServer() {
       return res.status(400).json({ error: "Invalid priority" });
     }
 
-    const tenantId = entry.tenant_id || 'default';
+    const tenantId = user?.tenant_id || entry.tenant_id || "default";
+    const tenantExists = db.prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as any;
+    if (!tenantExists?.id) {
+      return res.status(400).json({ error: "Invalid tenant" });
+    }
     ensureTenantCatalog(tenantId);
     const catalog = getTenantCatalog(tenantId);
     if (!catalog.branches.includes(entry.branch)) {
@@ -1085,8 +1111,15 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.post("/api/call", (req, res) => {
+  app.post("/api/call", requireAdmin, (req, res) => {
     const { id, calledTime } = req.body;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const item = db.prepare("SELECT tenant_id FROM queue WHERE id = ?").get(id) as any;
+    if (!item) return res.status(404).json({ error: "Ticket not found" });
+    if (!canAccessTenant(dbUser, item.tenant_id || "default")) {
+      return res.status(403).json({ error: "Access denied for this tenant" });
+    }
     db.prepare("UPDATE queue SET status = 'Processing', calledTime = ? WHERE id = ?").run(
       calledTime, id
     );
@@ -1094,14 +1127,19 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.post("/api/reassign", (req, res) => {
+  app.post("/api/reassign", requireAdmin, (req, res) => {
     const { id, branch, service } = req.body;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
     if (!id || typeof id !== "string") {
       return res.status(400).json({ error: "Ticket ID is required" });
     }
     const item = db.prepare("SELECT id, tenant_id FROM queue WHERE id = ?").get(id) as any;
     if (!item) return res.status(404).json({ error: "Ticket not found in active queue" });
     const tenantId = item.tenant_id || "default";
+    if (!canAccessTenant(dbUser, tenantId)) {
+      return res.status(403).json({ error: "Access denied for this tenant" });
+    }
     ensureTenantCatalog(tenantId);
     const catalog = getTenantCatalog(tenantId);
     if (!catalog.branches.includes(branch)) {
@@ -1119,10 +1157,37 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.post("/api/complete", (req, res) => {
+  app.post("/api/recall", requireAdmin, (req, res) => {
+    const { id } = req.body;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    if (!id || typeof id !== "string") {
+      return res.status(400).json({ error: "Ticket ID is required" });
+    }
+
+    const item = db.prepare("SELECT tenant_id, status FROM queue WHERE id = ?").get(id) as any;
+    if (!item) return res.status(404).json({ error: "Ticket not found" });
+    if (!canAccessTenant(dbUser, item.tenant_id || "default")) {
+      return res.status(403).json({ error: "Access denied for this tenant" });
+    }
+    if (item.status !== "Processing") {
+      return res.status(400).json({ error: "Only processing tickets can be recalled" });
+    }
+
+    db.prepare("UPDATE queue SET calledTime = ? WHERE id = ?").run(new Date().toISOString(), id);
+    broadcast({ type: "QUEUE_UPDATED" });
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/complete", requireAdmin, (req, res) => {
     const { id, completedTime, notes } = req.body;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
     const item = db.prepare("SELECT * FROM queue WHERE id = ?").get(id) as any;
     if (item) {
+      if (!canAccessTenant(dbUser, item.tenant_id || "default")) {
+        return res.status(403).json({ error: "Access denied for this tenant" });
+      }
       const sanitizedNotes = typeof notes === "string" && notes.trim().length > 0
         ? notes.trim().slice(0, 500)
         : null;
@@ -1140,10 +1205,15 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.post("/api/noshow", (req, res) => {
+  app.post("/api/noshow", requireAdmin, (req, res) => {
     const { id } = req.body;
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
     const item = db.prepare("SELECT * FROM queue WHERE id = ?").get(id) as any;
     if (item) {
+      if (!canAccessTenant(dbUser, item.tenant_id || "default")) {
+        return res.status(403).json({ error: "Access denied for this tenant" });
+      }
       db.prepare(`
         INSERT INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

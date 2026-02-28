@@ -42,6 +42,7 @@ const CUSTOMER_TERMS: Record<string, { singular: string; plural: string; title: 
   patient: { singular: "patient", plural: "patients", title: "Patient" },
   citizen: { singular: "citizen", plural: "citizens", title: "Citizen" },
 };
+const SLA_THRESHOLD_MINUTES = 10;
 
 interface AppProps {
   onGoToLanding?: () => void;
@@ -51,6 +52,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   const [view, setView] = useState<'client' | 'teller' | 'display' | 'analytics' | 'admin'>('teller');
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [history, setHistory] = useState<QueueEntry[]>([]);
+  const [tenantId, setTenantId] = useState('default');
   const [branches, setBranches] = useState<string[]>(DEFAULT_BRANCHES);
   const [services, setServices] = useState<string[]>(DEFAULT_SERVICES);
   const [customerTerm, setCustomerTerm] = useState<'customer' | 'client' | 'patient' | 'citizen'>('customer');
@@ -120,6 +122,11 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   const [catalogBranchesText, setCatalogBranchesText] = useState('');
   const [catalogServicesText, setCatalogServicesText] = useState('');
   const [catalogSaving, setCatalogSaving] = useState(false);
+  const [clientBranch, setClientBranch] = useState(DEFAULT_BRANCHES[0]);
+  const [clientService, setClientService] = useState(DEFAULT_SERVICES[0]);
+  const [clientPriority, setClientPriority] = useState<'Regular' | 'Priority'>('Regular');
+  const [qrBranch, setQrBranch] = useState(DEFAULT_BRANCHES[0]);
+  const [qrService, setQrService] = useState(DEFAULT_SERVICES[0]);
 
   const showNotification = (msg: string, isError = false) => {
     if (notifTimeoutRef.current) clearTimeout(notifTimeoutRef.current);
@@ -138,7 +145,9 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         fetch('/api/history', { headers })
       ]);
       if (qRes.ok) setQueue(await qRes.json());
+      else if (qRes.status === 401) setQueue([]);
       if (hRes.ok) setHistory(await hRes.json());
+      else if (hRes.status === 401) setHistory([]);
     } catch (err) {
       console.error("Failed to fetch data", err);
     }
@@ -175,7 +184,14 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     if (filterBranch !== 'All' && !branches.includes(filterBranch)) setFilterBranch('All');
     if (analyticsBranch !== 'All' && !branches.includes(analyticsBranch)) setAnalyticsBranch('All');
     if (exportBranch !== 'All' && !branches.includes(exportBranch)) setExportBranch('All');
+    if (!branches.includes(clientBranch)) setClientBranch(branches[0] || '');
+    if (!branches.includes(qrBranch)) setQrBranch(branches[0] || '');
   }, [branches, filterBranch, analyticsBranch, exportBranch]);
+
+  useEffect(() => {
+    if (!services.includes(clientService)) setClientService(services[0] || '');
+    if (!services.includes(qrService)) setQrService(services[0] || '');
+  }, [services, clientService, qrService]);
 
   // Restore admin session from localStorage and verify it
   useEffect(() => {
@@ -214,6 +230,20 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     if (viewParam === 'display') {
       setView('display');
     }
+  }, []);
+
+  // Kiosk deep-link support (?kiosk=1&tenant_id=...&branch=...&service=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const kiosk = params.get('kiosk') === '1';
+    const tenant = params.get('tenant_id');
+    const branch = params.get('branch');
+    const service = params.get('service');
+
+    if (kiosk) setView('client');
+    if (tenant) loadCatalog(undefined, tenant);
+    if (branch) setClientBranch(branch);
+    if (service) setClientService(service);
   }, []);
 
   // Load IPs, settings, SMTP, and super-admin data when entering admin view
@@ -326,16 +356,19 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     const nextPlan = typeof d?.plan === 'string' && ['free', 'starter', 'pro'].includes(d.plan) ? d.plan : 'free';
     setBranches(nextBranches);
     setServices(nextServices);
+    setTenantId(d?.tenantId || 'default');
     setCustomerTerm(nextTerm as 'customer' | 'client' | 'patient' | 'citizen');
     setTenantPlan(nextPlan as 'free' | 'starter' | 'pro');
     setPlanLimits(d?.limits || { maxBranches: 1, maxServices: 5 });
   };
 
-  const loadCatalog = async (token?: string) => {
+  const loadCatalog = async (token?: string, requestedTenantId?: string) => {
     const t = token ?? adminToken;
     const headers: HeadersInit = t ? { 'x-admin-token': t } : {};
     try {
-      const res = await fetch('/api/catalog', { headers });
+      const params = new URLSearchParams();
+      if (requestedTenantId) params.set('tenant_id', requestedTenantId);
+      const res = await fetch(`/api/catalog${params.toString() ? `?${params}` : ''}`, { headers });
       if (res.ok) {
         const d = await res.json();
         applyCatalog(d);
@@ -794,13 +827,15 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     const formData = new FormData(e.currentTarget);
     const name = formData.get('clientName') as string;
     if (!name) return;
+    const headers: HeadersInit = { 'Content-Type': 'application/json' };
+    if (adminToken) headers['x-admin-token'] = adminToken;
 
     const entry: QueueEntry = {
       id: 'SQ-' + crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase(),
       name,
-      branch: formData.get('clientBranch') as string,
-      service: formData.get('clientService') as string,
-      priority: formData.get('clientPriority') as string,
+      branch: clientBranch,
+      service: clientService,
+      priority: clientPriority,
       checkInTime: new Date().toISOString(),
       status: 'Waiting',
       calledTime: null,
@@ -810,8 +845,8 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     try {
       const res = await fetch('/api/queue', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(entry)
+        headers,
+        body: JSON.stringify({ ...entry, tenant_id: tenantId })
       });
       if (res.ok) {
         const waitingAhead = queue.filter(q => q.status === 'Waiting' && q.branch === entry.branch).length;
@@ -820,8 +855,9 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         const estWait = Math.round(position * avgMin);
         await fetchData();
         showNotification(`Ticket ${entry.id} · #${position} in line · ~${estWait} min wait`);
-        setView('teller');
-        e.currentTarget.reset();
+        if (adminToken) setView('teller');
+        const nameInput = e.currentTarget.elements.namedItem('clientName') as HTMLInputElement | null;
+        if (nameInput) nameInput.value = '';
       } else {
         const errData = await res.json().catch(() => ({ error: 'Check-in failed' }));
         showNotification(errData.error || 'Check-in failed. Please try again.', true);
@@ -832,10 +868,14 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   };
 
   const callNext = async (id: string) => {
+    if (!adminToken) {
+      showNotification('Sign in required for teller actions.', true);
+      return;
+    }
     try {
       const res = await fetch('/api/call', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
         body: JSON.stringify({ id, calledTime: new Date().toISOString() })
       });
       if (res.ok) { playChime(); await fetchData(); }
@@ -846,10 +886,14 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   };
 
   const completeTransaction = async (id: string, notes: string) => {
+    if (!adminToken) {
+      showNotification('Sign in required for teller actions.', true);
+      return;
+    }
     try {
       const res = await fetch('/api/complete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
         body: JSON.stringify({ id, completedTime: new Date().toISOString(), notes })
       });
       if (res.ok) {
@@ -863,10 +907,14 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   };
 
   const markNoShow = async (id: string) => {
+    if (!adminToken) {
+      showNotification('Sign in required for teller actions.', true);
+      return;
+    }
     try {
       const res = await fetch('/api/noshow', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
         body: JSON.stringify({ id })
       });
       if (res.ok) await fetchData();
@@ -877,13 +925,17 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   };
 
   const reassignClient = async (id: string, currentBranch: string, currentService: string) => {
+    if (!adminToken) {
+      showNotification('Sign in required for teller actions.', true);
+      return;
+    }
     const newBranch = reassignBranch[id] || currentBranch;
     const newService = reassignService[id] || currentService;
 
     try {
       const res = await fetch('/api/reassign', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
         body: JSON.stringify({ id, branch: newBranch, service: newService })
       });
       if (res.ok) {
@@ -898,9 +950,62 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     }
   };
 
+  const recallTicket = async (id: string) => {
+    if (!adminToken) {
+      showNotification('Sign in required for teller actions.', true);
+      return;
+    }
+    try {
+      const res = await fetch('/api/recall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) {
+        playChime();
+        await fetchData();
+        showNotification(`Ticket ${id} recalled.`);
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to recall ticket.' }));
+        showNotification(err.error || 'Failed to recall ticket.', true);
+      }
+    } catch {
+      showNotification('Failed to recall ticket. Check connection.', true);
+    }
+  };
+
   const filteredQueue = useMemo(() => {
     return filterBranch === 'All' ? queue : queue.filter(q => q.branch === filterBranch);
   }, [queue, filterBranch]);
+
+  const latestProcessingTicket = useMemo(() => {
+    const processing = filteredQueue
+      .filter(q => q.status === 'Processing')
+      .sort((a, b) => (b.calledTime || '').localeCompare(a.calledTime || ''));
+    return processing[0] || null;
+  }, [filteredQueue]);
+
+  const slaAlerts = useMemo(() => {
+    const now = Date.now();
+    return filteredQueue.filter((q) => {
+      if (q.status !== 'Waiting') return false;
+      const waitMin = (now - new Date(q.checkInTime).getTime()) / 60000;
+      return waitMin >= SLA_THRESHOLD_MINUTES;
+    });
+  }, [filteredQueue, currentTime]);
+
+  const kioskUrl = useMemo(() => {
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('kiosk', '1');
+    url.searchParams.set('tenant_id', tenantId);
+    if (qrBranch) url.searchParams.set('branch', qrBranch);
+    if (qrService) url.searchParams.set('service', qrService);
+    return url.toString();
+  }, [tenantId, qrBranch, qrService]);
+
+  const kioskQrImageUrl = useMemo(() => {
+    return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(kioskUrl)}`;
+  }, [kioskUrl]);
 
   const analytics = useMemo(() => {
     let totalWait = 0, totalService = 0, waitCount = 0, serviceCount = 0;
@@ -1071,13 +1176,25 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Branch</label>
-                      <select name="clientBranch" aria-label="Branch" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
+                      <select
+                        name="clientBranch"
+                        aria-label="Branch"
+                        value={clientBranch}
+                        onChange={(e) => setClientBranch(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none"
+                      >
                         {branches.map(b => <option key={b} value={b}>{b}</option>)}
                       </select>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">{termCopy.title} Type</label>
-                      <select name="clientPriority" aria-label={`${termCopy.title} Type`} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
+                      <select
+                        name="clientPriority"
+                        aria-label={`${termCopy.title} Type`}
+                        value={clientPriority}
+                        onChange={(e) => setClientPriority(e.target.value as 'Regular' | 'Priority')}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none"
+                      >
                         <option value="Regular">Regular</option>
                         <option value="Priority">Priority</option>
                       </select>
@@ -1086,7 +1203,13 @@ export default function App({ onGoToLanding }: AppProps = {}) {
 
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Service Type</label>
-                    <select name="clientService" aria-label="Service Type" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
+                    <select
+                      name="clientService"
+                      aria-label="Service Type"
+                      value={clientService}
+                      onChange={(e) => setClientService(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none"
+                    >
                       {services.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
@@ -1107,16 +1230,35 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                   <h2 className="text-2xl font-extrabold text-[#003366]">Active Service Queue</h2>
                   <p className="text-xs text-slate-400 font-medium">Real-time monitoring across the network</p>
                 </div>
-                <select
-                  aria-label="Filter by branch"
-                  value={filterBranch}
-                  onChange={(e) => setFilterBranch(e.target.value)}
-                  className="white-card text-[11px] font-bold rounded-lg px-4 py-2 outline-none cursor-pointer"
-                >
-                  <option value="All">All Branches</option>
-                  {branches.map(b => <option key={b} value={b}>{b.replace(' Branch', '')}</option>)}
-                </select>
+                <div className="flex items-center gap-2">
+                  {latestProcessingTicket && (
+                    <button
+                      type="button"
+                      onClick={() => recallTicket(latestProcessingTicket.id)}
+                      className="text-[10px] font-bold uppercase bg-amber-500 text-white px-4 py-2 rounded-lg hover:bg-amber-600 transition-colors"
+                    >
+                      Recall Last Called
+                    </button>
+                  )}
+                  <select
+                    aria-label="Filter by branch"
+                    value={filterBranch}
+                    onChange={(e) => setFilterBranch(e.target.value)}
+                    className="white-card text-[11px] font-bold rounded-lg px-4 py-2 outline-none cursor-pointer"
+                  >
+                    <option value="All">All Branches</option>
+                    {branches.map(b => <option key={b} value={b}>{b.replace(' Branch', '')}</option>)}
+                  </select>
+                </div>
               </div>
+
+              {slaAlerts.length > 0 && (
+                <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                  <p className="text-[11px] font-black text-red-700 uppercase tracking-wider">
+                    SLA Alert: {slaAlerts.length} waiting {termCopy.plural} over {SLA_THRESHOLD_MINUTES} minutes
+                  </p>
+                </div>
+              )}
 
               <div className="white-card rounded-2xl overflow-hidden">
                 <table className="w-full text-left">
@@ -1193,6 +1335,9 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                                 <button type="button" onClick={() => completeTransaction(item.id, completionNotes[item.id] || '')} className="text-[10px] font-bold uppercase bg-[#003366] text-white px-4 py-2 rounded-lg hover:shadow-lg transition-all shadow-md flex items-center gap-2">
                                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
                                   Finish
+                                </button>
+                                <button type="button" onClick={() => recallTicket(item.id)} className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-4 py-1.5 rounded-lg hover:bg-amber-50 transition-colors">
+                                  Recall
                                 </button>
                                 <button type="button" onClick={() => markNoShow(item.id)} className="text-[10px] font-bold uppercase text-slate-400 border border-slate-200 px-4 py-1.5 rounded-lg hover:bg-slate-50 hover:text-red-500 hover:border-red-200 transition-colors">
                                   No Show
@@ -1790,6 +1935,60 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                           {catalogSaving ? 'Saving…' : 'Save Catalog Settings'}
                         </button>
                       </form>
+                    </div>
+
+                    {/* QR KIOSK PANEL */}
+                    <div className="white-card rounded-2xl p-6 space-y-5">
+                      <div className="border-b pb-3">
+                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Kiosk QR Check-in</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Generate a QR link for touchless check-in per branch and service.</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Branch</label>
+                          <select
+                            value={qrBranch}
+                            onChange={e => setQrBranch(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                          >
+                            {branches.map(b => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Service</label>
+                          <select
+                            value={qrService}
+                            onChange={e => setQrService(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                          >
+                            {services.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                        <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Kiosk URL</p>
+                        <p className="text-[11px] text-slate-600 break-all">{kioskUrl}</p>
+                      </div>
+
+                      <div className="flex flex-col items-center gap-3">
+                        <img src={kioskQrImageUrl} alt="Kiosk QR code" className="w-44 h-44 rounded-lg border border-slate-200 bg-white p-2" />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(kioskUrl);
+                              showNotification('Kiosk URL copied.');
+                            } catch {
+                              showNotification('Failed to copy kiosk URL.', true);
+                            }
+                          }}
+                          className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-4 py-2 rounded-lg hover:bg-amber-50 transition-colors"
+                        >
+                          Copy Kiosk URL
+                        </button>
+                      </div>
                     </div>
 
                     {/* SMTP SETTINGS PANEL */}
