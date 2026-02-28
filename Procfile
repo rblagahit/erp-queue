@@ -1,1 +1,2 @@
-cat > Procfile << 'EOF'
+release: npm rebuild
+web: npm start
