@@ -17,6 +17,7 @@ interface QueueEntry {
   status: 'Waiting' | 'Processing' | 'Completed';
   calledTime: string | null;
   completedTime: string | null;
+  notes?: string | null;
 }
 
 interface IPEntry {
@@ -25,24 +26,36 @@ interface IPEntry {
   addedAt: string;
 }
 
-const BRANCHES = [
+const DEFAULT_BRANCHES = [
   "Carcar Branch", "Moalboal Branch", "Talisay Branch", "Carbon Branch",
   "Solinea Branch", "Mandaue Branch", "Danao Branch", "Bogo Branch",
   "Capitol Branch"
 ];
 
-const SERVICES = [
+const DEFAULT_SERVICES = [
   "Cash/Check Deposit", "Withdrawal", "Account Opening", "Customer Service", "Loans"
 ];
+
+const CUSTOMER_TERMS: Record<string, { singular: string; plural: string; title: string }> = {
+  customer: { singular: "customer", plural: "customers", title: "Customer" },
+  client: { singular: "client", plural: "clients", title: "Client" },
+  patient: { singular: "patient", plural: "patients", title: "Patient" },
+  citizen: { singular: "citizen", plural: "citizens", title: "Citizen" },
+};
 
 interface AppProps {
   onGoToLanding?: () => void;
 }
 
 export default function App({ onGoToLanding }: AppProps = {}) {
-  const [view, setView] = useState<'client' | 'teller' | 'analytics' | 'admin'>('teller');
+  const [view, setView] = useState<'client' | 'teller' | 'display' | 'analytics' | 'admin'>('teller');
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [history, setHistory] = useState<QueueEntry[]>([]);
+  const [branches, setBranches] = useState<string[]>(DEFAULT_BRANCHES);
+  const [services, setServices] = useState<string[]>(DEFAULT_SERVICES);
+  const [customerTerm, setCustomerTerm] = useState<'customer' | 'client' | 'patient' | 'citizen'>('customer');
+  const [tenantPlan, setTenantPlan] = useState<'free' | 'starter' | 'pro'>('free');
+  const [planLimits, setPlanLimits] = useState<{ maxBranches: number | null; maxServices: number | null }>({ maxBranches: 1, maxServices: 5 });
   const [filterBranch, setFilterBranch] = useState('All');
   const [analyticsBranch, setAnalyticsBranch] = useState('All');
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -96,16 +109,25 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   const [confirmDeleteUser, setConfirmDeleteUser] = useState<string | null>(null);
   const [confirmDeleteTenant, setConfirmDeleteTenant] = useState<string | null>(null);
   const [editTenantName, setEditTenantName] = useState<Record<string, string>>({});
+  const [editTenantPlan, setEditTenantPlan] = useState<Record<string, 'free' | 'starter' | 'pro'>>({});
 
   // UI state
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [confirmRemoveIP, setConfirmRemoveIP] = useState<string | null>(null);
+  const [completionNotes, setCompletionNotes] = useState<Record<string, string>>({});
+  const [reassignBranch, setReassignBranch] = useState<Record<string, string>>({});
+  const [reassignService, setReassignService] = useState<Record<string, string>>({});
+  const [catalogBranchesText, setCatalogBranchesText] = useState('');
+  const [catalogServicesText, setCatalogServicesText] = useState('');
+  const [catalogSaving, setCatalogSaving] = useState(false);
 
   const showNotification = (msg: string, isError = false) => {
     if (notifTimeoutRef.current) clearTimeout(notifTimeoutRef.current);
     setNotification({ msg, isError });
     notifTimeoutRef.current = setTimeout(() => setNotification(null), 3500);
   };
+
+  const termCopy = CUSTOMER_TERMS[customerTerm] || CUSTOMER_TERMS.customer;
 
   const fetchData = async () => {
     const token = localStorage.getItem('adminToken');
@@ -124,6 +146,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
 
   // Initial load, WebSocket, polling
   useEffect(() => {
+    loadCatalog();
     fetchData();
     const pollInterval = setInterval(fetchData, 30000);
 
@@ -148,6 +171,12 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (filterBranch !== 'All' && !branches.includes(filterBranch)) setFilterBranch('All');
+    if (analyticsBranch !== 'All' && !branches.includes(analyticsBranch)) setAnalyticsBranch('All');
+    if (exportBranch !== 'All' && !branches.includes(exportBranch)) setExportBranch('All');
+  }, [branches, filterBranch, analyticsBranch, exportBranch]);
+
   // Restore admin session from localStorage and verify it
   useEffect(() => {
     const stored = localStorage.getItem('adminToken');
@@ -156,6 +185,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         .then(async res => {
           if (res.ok) {
             setAdminToken(stored);
+            loadCatalog(stored);
             const me = await fetch('/api/auth/me', { headers: { 'x-admin-token': stored } });
             if (me.ok) { const u = await me.json(); setCurrentUserRole(u.role); }
           } else {
@@ -178,12 +208,21 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     }
   }, []);
 
+  // Allow direct TV display mode via ?view=display
+  useEffect(() => {
+    const viewParam = new URLSearchParams(window.location.search).get('view');
+    if (viewParam === 'display') {
+      setView('display');
+    }
+  }, []);
+
   // Load IPs, settings, SMTP, and super-admin data when entering admin view
   useEffect(() => {
     if (view === 'admin' && adminToken) {
       loadIPs();
       loadSettings();
       loadSmtp();
+      loadAdminCatalog();
     }
   }, [view, adminToken]);
 
@@ -280,6 +319,75 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     } catch {}
   };
 
+  const applyCatalog = (d: any) => {
+    const nextBranches = Array.isArray(d?.branches) && d.branches.length ? d.branches : DEFAULT_BRANCHES;
+    const nextServices = Array.isArray(d?.services) && d.services.length ? d.services : DEFAULT_SERVICES;
+    const nextTerm = typeof d?.customerTerm === 'string' && CUSTOMER_TERMS[d.customerTerm] ? d.customerTerm : 'customer';
+    const nextPlan = typeof d?.plan === 'string' && ['free', 'starter', 'pro'].includes(d.plan) ? d.plan : 'free';
+    setBranches(nextBranches);
+    setServices(nextServices);
+    setCustomerTerm(nextTerm as 'customer' | 'client' | 'patient' | 'citizen');
+    setTenantPlan(nextPlan as 'free' | 'starter' | 'pro');
+    setPlanLimits(d?.limits || { maxBranches: 1, maxServices: 5 });
+  };
+
+  const loadCatalog = async (token?: string) => {
+    const t = token ?? adminToken;
+    const headers: HeadersInit = t ? { 'x-admin-token': t } : {};
+    try {
+      const res = await fetch('/api/catalog', { headers });
+      if (res.ok) {
+        const d = await res.json();
+        applyCatalog(d);
+      }
+    } catch {}
+  };
+
+  const loadAdminCatalog = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/catalog', { headers: { 'x-admin-token': t } });
+      if (res.ok) {
+        const d = await res.json();
+        applyCatalog(d);
+        setCatalogBranchesText((d.branches || []).join('\n'));
+        setCatalogServicesText((d.services || []).join('\n'));
+      }
+    } catch {}
+  };
+
+  const saveCatalog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    const nextBranches = catalogBranchesText.split('\n').map(v => v.trim()).filter(Boolean);
+    const nextServices = catalogServicesText.split('\n').map(v => v.trim()).filter(Boolean);
+    setCatalogSaving(true);
+    try {
+      const res = await fetch('/api/admin/catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({
+          branches: nextBranches,
+          services: nextServices,
+          customerTerm,
+        }),
+      });
+      if (res.ok) {
+        showNotification('Catalog settings saved.');
+        await loadAdminCatalog();
+        await fetchData();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to save catalog settings.' }));
+        showNotification(err.error || 'Failed to save catalog settings.', true);
+      }
+    } catch {
+      showNotification('Failed to save catalog settings. Check connection.', true);
+    } finally {
+      setCatalogSaving(false);
+    }
+  };
+
   const saveSmtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminToken) return;
@@ -356,8 +464,13 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         const data = await res.json();
         setAdminTenants(data);
         const names: Record<string, string> = {};
-        data.forEach((t: any) => { names[t.id] = t.name; });
+        const plans: Record<string, 'free' | 'starter' | 'pro'> = {};
+        data.forEach((t: any) => {
+          names[t.id] = t.name;
+          plans[t.id] = (['free', 'starter', 'pro'].includes(t.plan) ? t.plan : 'free') as 'free' | 'starter' | 'pro';
+        });
         setEditTenantName(names);
+        setEditTenantPlan(plans);
       }
     } catch {}
   };
@@ -400,6 +513,28 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     } catch { showNotification('Failed to update tenant.', true); }
   };
 
+  const updateTenantPlan = async (tenantId: string) => {
+    if (!adminToken) return;
+    const plan = editTenantPlan[tenantId];
+    if (!plan) return;
+    try {
+      const res = await fetch(`/api/admin/tenants/${tenantId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ plan }),
+      });
+      if (res.ok) {
+        showNotification('Tenant plan updated.');
+        await loadAdminTenants();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to update tenant plan.' }));
+        showNotification(err.error || 'Failed to update tenant plan.', true);
+      }
+    } catch {
+      showNotification('Failed to update tenant plan.', true);
+    }
+  };
+
   const deleteTenant = async (tenantId: string) => {
     if (!adminToken) return;
     try {
@@ -420,17 +555,19 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: adminEmail, password: adminPassword })
       });
-      if (res.ok) {
-        const { token } = await res.json();
-        setAdminToken(token);
-        localStorage.setItem('adminToken', token);
+        if (res.ok) {
+          const { token } = await res.json();
+          setAdminToken(token);
+          localStorage.setItem('adminToken', token);
         setAdminEmail('');
         setAdminPassword('');
-        loadIPs(token);
-        loadSettings(token);
-        loadSmtp(token);
-        fetch('/api/auth/me', { headers: { 'x-admin-token': token } })
-          .then(r => r.json()).then(u => setCurrentUserRole(u.role)).catch(() => {});
+          loadIPs(token);
+          loadSettings(token);
+          loadSmtp(token);
+          loadCatalog(token);
+          loadAdminCatalog(token);
+          fetch('/api/auth/me', { headers: { 'x-admin-token': token } })
+            .then(r => r.json()).then(u => setCurrentUserRole(u.role)).catch(() => {});
       } else {
         const err = await res.json().catch(() => ({}));
         setAdminLoginError(err.error || 'Invalid email or password. Please try again.');
@@ -514,6 +651,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     setAdminToken(null);
     setCurrentUserRole(null);
     localStorage.removeItem('adminToken');
+    loadCatalog();
     setView('teller');
   };
 
@@ -597,7 +735,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
 
       // Compute TAT per service from the filtered dataset
       const serviceStats: Record<string, { total: number; count: number }> = {};
-      SERVICES.forEach(s => serviceStats[s] = { total: 0, count: 0 });
+      services.forEach(s => serviceStats[s] = { total: 0, count: 0 });
       data.forEach(h => {
         if (h.completedTime && h.calledTime && serviceStats[h.service]) {
           const dur = (new Date(h.completedTime).getTime() - new Date(h.calledTime).getTime()) / 60000;
@@ -609,7 +747,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       });
 
       const headers = [
-        "Ticket ID", "Client Name", "Branch", "Service", "Priority",
+        "Ticket ID", `${termCopy.title} Name`, "Branch", "Service", "Priority",
         "Check-In", "Called At", "Completed At", "Wait Time (m)", "Service Time (m)"
       ];
       const rows = data.map(h => {
@@ -627,7 +765,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         '',
         'TAT per Service Type Summary',
         'Service Type,Average TAT (m),Total Transactions',
-        ...SERVICES.map(s => `"${s}",${serviceStats[s].count
+        ...services.map(s => `"${s}",${serviceStats[s].count
           ? Math.round(serviceStats[s].total / serviceStats[s].count) : 0},${serviceStats[s].count}`)
       ].join('\n');
 
@@ -701,20 +839,23 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         body: JSON.stringify({ id, calledTime: new Date().toISOString() })
       });
       if (res.ok) { playChime(); await fetchData(); }
-      else showNotification('Failed to call customer. Please try again.', true);
+      else showNotification(`Failed to call ${termCopy.singular}. Please try again.`, true);
     } catch {
-      showNotification('Failed to call customer. Check connection.', true);
+      showNotification(`Failed to call ${termCopy.singular}. Check connection.`, true);
     }
   };
 
-  const completeTransaction = async (id: string) => {
+  const completeTransaction = async (id: string, notes: string) => {
     try {
       const res = await fetch('/api/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, completedTime: new Date().toISOString() })
+        body: JSON.stringify({ id, completedTime: new Date().toISOString(), notes })
       });
-      if (res.ok) await fetchData();
+      if (res.ok) {
+        setCompletionNotes(prev => ({ ...prev, [id]: '' }));
+        await fetchData();
+      }
       else showNotification('Failed to complete transaction. Please try again.', true);
     } catch {
       showNotification('Failed to complete transaction. Check connection.', true);
@@ -735,6 +876,28 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     }
   };
 
+  const reassignClient = async (id: string, currentBranch: string, currentService: string) => {
+    const newBranch = reassignBranch[id] || currentBranch;
+    const newService = reassignService[id] || currentService;
+
+    try {
+      const res = await fetch('/api/reassign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, branch: newBranch, service: newService })
+      });
+      if (res.ok) {
+        await fetchData();
+        showNotification(`Ticket ${id} reassigned to ${newBranch} / ${newService} and moved to Priority queue.`);
+      } else {
+        const err = await res.json().catch(() => ({ error: `Failed to reassign ${termCopy.singular}.` }));
+        showNotification(err.error || `Failed to reassign ${termCopy.singular}.`, true);
+      }
+    } catch {
+      showNotification(`Failed to reassign ${termCopy.singular}. Check connection.`, true);
+    }
+  };
+
   const filteredQueue = useMemo(() => {
     return filterBranch === 'All' ? queue : queue.filter(q => q.branch === filterBranch);
   }, [queue, filterBranch]);
@@ -742,7 +905,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   const analytics = useMemo(() => {
     let totalWait = 0, totalService = 0, waitCount = 0, serviceCount = 0;
     const serviceStats: Record<string, { total: number; count: number }> = {};
-    SERVICES.forEach(s => serviceStats[s] = { total: 0, count: 0 });
+    services.forEach(s => serviceStats[s] = { total: 0, count: 0 });
 
     const filteredHistory = analyticsBranch === 'All'
       ? history
@@ -769,13 +932,24 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       awt: waitCount ? Math.round(totalWait / waitCount) : 0,
       tat: serviceCount ? Math.round(totalService / serviceCount) : 0,
       total: filteredHistory.length,
-      tatPerService: SERVICES.map(s => ({
+      tatPerService: services.map(s => ({
         name: s,
         avg: serviceStats[s].count ? Math.round(serviceStats[s].total / serviceStats[s].count) : 0,
         count: serviceStats[s].count
       }))
     };
-  }, [history, analyticsBranch]);
+  }, [history, analyticsBranch, services]);
+
+  const displayRows = useMemo(() => {
+    const processing = queue
+      .filter(item => item.status === 'Processing')
+      .sort((a, b) => (a.calledTime || '').localeCompare(b.calledTime || ''));
+
+    return processing.map(item => ({
+      item,
+      waiting: queue.filter(q => q.status === 'Waiting' && q.branch === item.branch).length,
+    }));
+  }, [queue]);
 
   const formatDuration = (ms: number) => {
     const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -803,10 +977,13 @@ export default function App({ onGoToLanding }: AppProps = {}) {
 
           <div className="hidden md:flex gap-10">
             <button type="button" onClick={() => setView('client')} className={cn("nav-link text-xs font-bold uppercase tracking-widest", view === 'client' ? "active" : "text-slate-400")}>
-              Customer Entry
+              {termCopy.title} Entry
             </button>
             <button type="button" onClick={() => setView('teller')} className={cn("nav-link text-xs font-bold uppercase tracking-widest", view === 'teller' ? "active" : "text-slate-400")}>
               Branch Console
+            </button>
+            <button type="button" onClick={() => setView('display')} className={cn("nav-link text-xs font-bold uppercase tracking-widest", view === 'display' ? "active" : "text-slate-400")}>
+              Now Serving
             </button>
             <button type="button" onClick={() => setView('analytics')} className={cn("nav-link text-xs font-bold uppercase tracking-widest", view === 'analytics' ? "active" : "text-slate-400")}>
               Analytics Data
@@ -846,8 +1023,9 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         {mobileMenuOpen && (
           <div className="md:hidden border-t border-slate-100 bg-white px-6 py-4 flex flex-col gap-1">
             {([
-              { key: 'client', label: 'Customer Entry' },
+              { key: 'client', label: `${termCopy.title} Entry` },
               { key: 'teller', label: 'Branch Console' },
+              { key: 'display', label: 'Now Serving' },
               { key: 'analytics', label: 'Analytics Data' },
               { key: 'admin', label: 'Admin' },
             ] as const).map(item => (
@@ -886,7 +1064,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
 
                 <form onSubmit={handleCheckIn} className="space-y-5">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Client Full Name</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">{termCopy.title} Full Name</label>
                     <input name="clientName" type="text" required placeholder="Juan Dela Cruz" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-amber-400 outline-none transition-all" />
                   </div>
 
@@ -894,12 +1072,12 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Branch</label>
                       <select name="clientBranch" aria-label="Branch" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
-                        {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                        {branches.map(b => <option key={b} value={b}>{b}</option>)}
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Customer Type</label>
-                      <select name="clientPriority" aria-label="Customer Type" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">{termCopy.title} Type</label>
+                      <select name="clientPriority" aria-label={`${termCopy.title} Type`} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
                         <option value="Regular">Regular</option>
                         <option value="Priority">Priority</option>
                       </select>
@@ -909,7 +1087,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Service Type</label>
                     <select name="clientService" aria-label="Service Type" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
-                      {SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
+                      {services.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
 
@@ -936,7 +1114,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                   className="white-card text-[11px] font-bold rounded-lg px-4 py-2 outline-none cursor-pointer"
                 >
                   <option value="All">All Branches</option>
-                  {BRANCHES.map(b => <option key={b} value={b}>{b.replace(' Branch', '')}</option>)}
+                  {branches.map(b => <option key={b} value={b}>{b.replace(' Branch', '')}</option>)}
                 </select>
               </div>
 
@@ -1000,19 +1178,55 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                             </div>
                           </td>
                           <td className="px-6 py-5 text-right">
-                            {item.status === 'Waiting' ? (
-                              <button type="button" onClick={() => callNext(item.id)} className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-4 py-2 rounded-lg hover:bg-amber-50 transition-colors shadow-sm">Call Client</button>
-                            ) : (
-                              <div className="flex flex-col items-end gap-2">
-                                <button type="button" onClick={() => completeTransaction(item.id)} className="text-[10px] font-bold uppercase bg-[#003366] text-white px-4 py-2 rounded-lg hover:shadow-lg transition-all shadow-md flex items-center gap-2">
+                            <div className="flex flex-col items-end gap-2">
+                              {item.status === 'Waiting' ? (
+                                <button type="button" onClick={() => callNext(item.id)} className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-4 py-2 rounded-lg hover:bg-amber-50 transition-colors shadow-sm">Call {termCopy.title}</button>
+                              ) : (
+                                <>
+                                <textarea
+                                  value={completionNotes[item.id] || ''}
+                                  onChange={(e) => setCompletionNotes(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                  placeholder="Add completion note (optional)"
+                                  rows={2}
+                                  className="w-56 text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none"
+                                />
+                                <button type="button" onClick={() => completeTransaction(item.id, completionNotes[item.id] || '')} className="text-[10px] font-bold uppercase bg-[#003366] text-white px-4 py-2 rounded-lg hover:shadow-lg transition-all shadow-md flex items-center gap-2">
                                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
                                   Finish
                                 </button>
                                 <button type="button" onClick={() => markNoShow(item.id)} className="text-[10px] font-bold uppercase text-slate-400 border border-slate-200 px-4 py-1.5 rounded-lg hover:bg-slate-50 hover:text-red-500 hover:border-red-200 transition-colors">
                                   No Show
                                 </button>
+                                </>
+                              )}
+
+                              <div className="w-56 border-t border-slate-100 pt-2 mt-1">
+                                <p className="text-[9px] text-slate-400 font-bold uppercase mb-1 text-left">Reassign</p>
+                                <div className="space-y-2">
+                                  <select
+                                    value={reassignBranch[item.id] || item.branch}
+                                    onChange={(e) => setReassignBranch(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                    className="w-full text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none"
+                                  >
+                                    {branches.map(b => <option key={b} value={b}>{b}</option>)}
+                                  </select>
+                                  <select
+                                    value={reassignService[item.id] || item.service}
+                                    onChange={(e) => setReassignService(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                    className="w-full text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none"
+                                  >
+                                    {services.map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    onClick={() => reassignClient(item.id, item.branch, item.service)}
+                                    className="w-full text-[10px] font-bold uppercase text-purple-700 border border-purple-200 px-3 py-1.5 rounded-lg hover:bg-purple-50 transition-colors"
+                                  >
+                                    Reassign to Priority
+                                  </button>
+                                </div>
                               </div>
-                            )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1025,6 +1239,38 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                   </div>
                 )}
               </div>
+            </motion.section>
+          )}
+
+          {/* NOW SERVING DISPLAY */}
+          {view === 'display' && (
+            <motion.section key="display" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6">
+              <div className="white-card rounded-2xl p-6 md:p-8 bg-gradient-to-r from-[#003366] to-[#0a4a82] text-white">
+                <p className="text-xs font-bold uppercase tracking-widest text-blue-100">Now Serving</p>
+                <h2 className="text-3xl md:text-5xl font-black mt-2">Live Branch Display</h2>
+                <p className="text-blue-100 mt-2 text-sm">Open with <span className="font-bold">?view=display</span> for TV mode.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {displayRows.map(({ item, waiting }) => (
+                  <div key={item.id} className="white-card rounded-2xl p-6 border-l-4 border-amber-400">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{item.branch}</p>
+                    <p className="text-4xl md:text-5xl font-black text-[#003366] mt-2">{item.id}</p>
+                    <p className="text-lg font-bold text-slate-700 mt-1">{item.name}</p>
+                    <p className="text-sm text-slate-500">{item.service}</p>
+                    <div className="mt-5 flex items-center justify-between text-xs">
+                      <span className="font-bold text-blue-600 uppercase">Processing</span>
+                      <span className="font-bold text-slate-500">{waiting} waiting in this branch</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {displayRows.length === 0 && (
+                <div className="white-card rounded-2xl p-16 text-center">
+                  <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">No ticket is currently being served</p>
+                </div>
+              )}
             </motion.section>
           )}
 
@@ -1043,7 +1289,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                   className="white-card text-[11px] font-bold rounded-lg px-4 py-2 outline-none cursor-pointer border border-slate-100"
                 >
                   <option value="All">All Branches</option>
-                  {BRANCHES.map(b => <option key={b} value={b}>{b.replace(' Branch', '')}</option>)}
+                  {branches.map(b => <option key={b} value={b}>{b.replace(' Branch', '')}</option>)}
                 </select>
               </div>
 
@@ -1056,12 +1302,12 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                 <div className="white-card p-6 rounded-2xl border-l-4 border-amber-400">
                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Avg. Service Time (TAT)</p>
                   <h3 className="text-3xl font-black text-[#003366] metric-value">{analytics.tat}m</h3>
-                  <p className="text-[9px] text-slate-400 font-medium mt-2">Completion duration per client</p>
+                  <p className="text-[9px] text-slate-400 font-medium mt-2">Completion duration per {termCopy.singular}</p>
                 </div>
                 <div className="white-card p-6 rounded-2xl">
                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Total Serviced Today</p>
                   <h3 className="text-3xl font-black text-[#003366] metric-value">{analytics.total}</h3>
-                  <p className="text-[9px] text-blue-600 font-bold mt-2">Across {BRANCHES.length} Locations</p>
+                  <p className="text-[9px] text-blue-600 font-bold mt-2">Across {branches.length} Locations</p>
                 </div>
               </div>
 
@@ -1090,7 +1336,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                     <table className="w-full text-left text-xs">
                       <thead>
                         <tr className="text-slate-400">
-                          <th className="pb-3 font-semibold">Client</th>
+                          <th className="pb-3 font-semibold">{termCopy.title}</th>
                           <th className="pb-3 font-semibold">Branch</th>
                           <th className="pb-3 font-semibold">Wait Time</th>
                           <th className="pb-3 font-semibold">Service Duration</th>
@@ -1288,7 +1534,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                     <div>
                       <h2 className="text-2xl font-extrabold text-[#003366]">Admin Panel</h2>
                       <p className="text-xs text-slate-400 font-medium">
-                        IP Whitelist · Reports · SMTP · API Settings
+                        IP Whitelist · Catalog · Language · Reports · SMTP · API Settings
                         {currentUserRole === 'super_admin' && <span className="ml-2 text-amber-500 font-black">· Super Admin</span>}
                       </p>
                     </div>
@@ -1412,7 +1658,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-xs font-bold focus:ring-2 focus:ring-amber-400 transition-all"
                           >
                             <option value="All">All Branches</option>
-                            {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                            {branches.map(b => <option key={b} value={b}>{b}</option>)}
                           </select>
                         </div>
 
@@ -1487,6 +1733,63 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                           </button>
                         )}
                       </div>
+                    </div>
+
+                    {/* SMTP SETTINGS PANEL */}
+                    <div className="white-card rounded-2xl p-6 space-y-5">
+                      <div className="border-b pb-3">
+                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Branch / Service Catalog</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Tenant-specific queue configuration with plan enforcement ({tenantPlan.toUpperCase()} plan).
+                        </p>
+                      </div>
+
+                      <form onSubmit={saveCatalog} className="space-y-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Language Term</label>
+                          <select
+                            value={customerTerm}
+                            onChange={e => setCustomerTerm(e.target.value as 'customer' | 'client' | 'patient' | 'citizen')}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                          >
+                            <option value="customer">Customer</option>
+                            <option value="client">Client</option>
+                            <option value="patient">Patient</option>
+                            <option value="citizen">Citizen</option>
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Branches (1 per line)</label>
+                            <textarea
+                              rows={6}
+                              value={catalogBranchesText}
+                              onChange={e => setCatalogBranchesText(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                            />
+                            <p className="text-[10px] text-slate-400">
+                              Limit: {planLimits.maxBranches === null ? 'Unlimited' : planLimits.maxBranches}
+                            </p>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Services (1 per line)</label>
+                            <textarea
+                              rows={6}
+                              value={catalogServicesText}
+                              onChange={e => setCatalogServicesText(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                            />
+                            <p className="text-[10px] text-slate-400">
+                              Limit: {planLimits.maxServices === null ? 'Unlimited' : planLimits.maxServices}
+                            </p>
+                          </div>
+                        </div>
+
+                        <button type="submit" disabled={catalogSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
+                          {catalogSaving ? 'Saving…' : 'Save Catalog Settings'}
+                        </button>
+                      </form>
                     </div>
 
                     {/* SMTP SETTINGS PANEL */}
@@ -1742,12 +2045,21 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                                       <p className="text-[10px] text-slate-400 font-mono">{t.slug}</p>
                                     </td>
                                     <td className="py-3 pr-4">
-                                      <span className={cn(
-                                        "text-[9px] font-black uppercase px-2 py-0.5 rounded-full",
-                                        t.plan === 'pro' ? "bg-purple-100 text-purple-700" :
-                                        t.plan === 'starter' ? "bg-blue-100 text-blue-700" :
-                                        "bg-slate-100 text-slate-500"
-                                      )}>{t.plan || 'free'}</span>
+                                      <div className="flex items-center gap-2">
+                                        <select
+                                          aria-label="Tenant plan"
+                                          value={editTenantPlan[t.id] || (t.plan || 'free')}
+                                          onChange={e => setEditTenantPlan(prev => ({ ...prev, [t.id]: e.target.value as 'free' | 'starter' | 'pro' }))}
+                                          className="text-[10px] font-bold bg-slate-100 border-0 rounded-lg px-2 py-1.5 outline-none cursor-pointer focus:ring-2 focus:ring-amber-400"
+                                        >
+                                          <option value="free">Free</option>
+                                          <option value="starter">Starter</option>
+                                          <option value="pro">Pro</option>
+                                        </select>
+                                        {(editTenantPlan[t.id] || t.plan || 'free') !== (t.plan || 'free') && (
+                                          <button type="button" onClick={() => updateTenantPlan(t.id)} className="text-[9px] font-black uppercase text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded transition-colors hover:bg-amber-50">Save</button>
+                                        )}
+                                      </div>
                                     </td>
                                     <td className="py-3 pr-4">
                                       <p className="text-xs text-slate-600 font-bold">{t.userCount}</p>

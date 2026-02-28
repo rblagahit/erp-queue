@@ -23,14 +23,21 @@ const writeFile = promisify(fs.writeFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const VALID_BRANCHES = new Set([
+const DEFAULT_BRANCHES = [
   "Carcar Branch", "Moalboal Branch", "Talisay Branch", "Carbon Branch",
   "Solinea Branch", "Mandaue Branch", "Danao Branch", "Bogo Branch", "Capitol Branch",
-]);
-const VALID_SERVICES = new Set([
+];
+const DEFAULT_SERVICES = [
   "Cash/Check Deposit", "Withdrawal", "Account Opening", "Customer Service", "Loans",
-]);
+];
 const VALID_PRIORITIES = new Set(["Regular", "Priority"]);
+const VALID_CUSTOMER_TERMS = new Set(["customer", "client", "patient", "citizen"]);
+
+const PLAN_LIMITS: Record<string, { maxBranches: number | null; maxServices: number | null }> = {
+  free: { maxBranches: 1, maxServices: 5 },
+  starter: { maxBranches: 9, maxServices: 15 },
+  pro: { maxBranches: null, maxServices: null },
+};
 
 async function startServer() {
   const app = express();
@@ -63,7 +70,8 @@ async function startServer() {
       checkInTime TEXT,
       status TEXT,
       calledTime TEXT,
-      completedTime TEXT
+      completedTime TEXT,
+      notes TEXT
     );
 
     CREATE TABLE IF NOT EXISTS history (
@@ -76,7 +84,8 @@ async function startServer() {
       checkInTime TEXT,
       status TEXT,
       calledTime TEXT,
-      completedTime TEXT
+      completedTime TEXT,
+      notes TEXT
     );
 
     CREATE TABLE IF NOT EXISTS ip_whitelist (
@@ -115,6 +124,22 @@ async function startServer() {
       settings TEXT,
       createdAt TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS tenant_branches (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      createdAt TEXT,
+      UNIQUE(tenant_id, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS tenant_services (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      createdAt TEXT,
+      UNIQUE(tenant_id, name)
+    );
   `);
 
   // Ensure tenant columns exist (for older DBs)
@@ -127,6 +152,12 @@ async function startServer() {
   }
   if (!hasColumn('history', 'tenant_id')) {
     db.prepare(`ALTER TABLE history ADD COLUMN tenant_id TEXT DEFAULT 'default'`).run();
+  }
+  if (!hasColumn('queue', 'notes')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN notes TEXT`).run();
+  }
+  if (!hasColumn('history', 'notes')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN notes TEXT`).run();
   }
   if (!hasColumn('admin_sessions', 'user_id')) {
     db.prepare(`ALTER TABLE admin_sessions ADD COLUMN user_id TEXT`).run();
@@ -142,6 +173,8 @@ async function startServer() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_history_tenant_completed ON history(tenant_id, completedTime);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_history_branch_completed ON history(branch, completedTime);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_queue_tenant_status ON queue(tenant_id, status);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_branches_tenant ON tenant_branches(tenant_id, name);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_services_tenant ON tenant_services(tenant_id, name);`);
 
   // Seed default super_admin user if none exist
   const userCount = (db.prepare('SELECT COUNT(1) as c FROM users').get() as any).c as number;
@@ -207,6 +240,59 @@ async function startServer() {
     const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
     if (!session?.user_id) return null;
     return db.prepare("SELECT * FROM users WHERE id = ?").get(session.user_id) as any;
+  };
+
+  const normalizeNameList = (items: unknown): string[] => {
+    if (!Array.isArray(items)) return [];
+    const seen = new Set<string>();
+    const cleaned: string[] = [];
+    for (const item of items) {
+      if (typeof item !== "string") continue;
+      const value = item.trim();
+      if (!value) continue;
+      const dedupeKey = value.toLowerCase();
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      cleaned.push(value);
+    }
+    return cleaned;
+  };
+
+  const getPlanLimits = (planRaw?: string) => {
+    const plan = (planRaw || "free").toLowerCase();
+    return PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+  };
+
+  const getTenantCatalog = (tenantId: string) => {
+    const tenant = db
+      .prepare("SELECT id, plan, settings FROM tenants WHERE id = ?")
+      .get(tenantId) as any;
+    const plan = (tenant?.plan || "free").toLowerCase();
+    const limits = getPlanLimits(plan);
+
+    const branchRows = db
+      .prepare("SELECT name FROM tenant_branches WHERE tenant_id = ? ORDER BY name ASC")
+      .all(tenantId) as { name: string }[];
+    const serviceRows = db
+      .prepare("SELECT name FROM tenant_services WHERE tenant_id = ? ORDER BY name ASC")
+      .all(tenantId) as { name: string }[];
+
+    const settings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    const customerTerm = typeof settings?.customerTerm === "string" && VALID_CUSTOMER_TERMS.has(settings.customerTerm)
+      ? settings.customerTerm
+      : "customer";
+
+    return {
+      tenantId,
+      plan,
+      branches: (
+        branchRows.length ? branchRows.map((r) => r.name) : [...DEFAULT_BRANCHES]
+      ).slice(0, limits.maxBranches ?? undefined),
+      services: (
+        serviceRows.length ? serviceRows.map((r) => r.name) : [...DEFAULT_SERVICES]
+      ).slice(0, limits.maxServices ?? undefined),
+      customerTerm,
+    };
   };
 
   const checkIPAccess = (
@@ -369,6 +455,7 @@ async function startServer() {
     db.prepare(
       "INSERT INTO tenants (id, name, slug, settings, plan, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(tenantId, orgName, orgSlug, JSON.stringify({}), 'free', new Date().toISOString());
+    ensureTenantCatalog(tenantId);
 
     const token = crypto.randomBytes(32).toString("hex");
     db.prepare("INSERT INTO admin_sessions (token, createdAt, user_id) VALUES (?, ?, ?)").run(
@@ -523,6 +610,93 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.get("/api/catalog", (req, res) => {
+    const token = req.headers["x-admin-token"] as string | undefined;
+    const user = token ? getUserFromToken(token) : null;
+    const requestedTenantId = typeof req.query.tenant_id === "string" ? req.query.tenant_id : null;
+    const tenantId = requestedTenantId || user?.tenant_id || "default";
+    const tenantExists = db.prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as any;
+    const effectiveTenantId = tenantExists?.id || "default";
+    ensureTenantCatalog(effectiveTenantId);
+    const catalog = getTenantCatalog(effectiveTenantId);
+    const limits = getPlanLimits(catalog.plan);
+    res.json({
+      tenantId: effectiveTenantId,
+      plan: catalog.plan,
+      limits,
+      branches: catalog.branches,
+      services: catalog.services,
+      customerTerm: catalog.customerTerm,
+    });
+  });
+
+  app.get("/api/admin/catalog", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    const tenantId = dbUser?.tenant_id || "default";
+    ensureTenantCatalog(tenantId);
+    const catalog = getTenantCatalog(tenantId);
+    const limits = getPlanLimits(catalog.plan);
+    res.json({
+      plan: catalog.plan,
+      limits,
+      branches: catalog.branches,
+      services: catalog.services,
+      customerTerm: catalog.customerTerm,
+    });
+  });
+
+  app.post("/api/admin/catalog", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser?.tenant_id) return res.status(401).json({ error: "Session invalid" });
+    const tenantId = dbUser.tenant_id as string;
+    ensureTenantCatalog(tenantId);
+
+    const branches = normalizeNameList(req.body?.branches);
+    const services = normalizeNameList(req.body?.services);
+    const customerTerm = typeof req.body?.customerTerm === "string"
+      ? req.body.customerTerm.toLowerCase().trim()
+      : "";
+
+    if (!branches.length) return res.status(400).json({ error: "At least one branch is required" });
+    if (!services.length) return res.status(400).json({ error: "At least one service is required" });
+    if (!VALID_CUSTOMER_TERMS.has(customerTerm)) {
+      return res.status(400).json({ error: "Invalid customer term" });
+    }
+
+    const tenant = db.prepare("SELECT plan, settings FROM tenants WHERE id = ?").get(tenantId) as any;
+    const plan = (tenant?.plan || "free").toLowerCase();
+    const limits = getPlanLimits(plan);
+
+    if (limits.maxBranches !== null && branches.length > limits.maxBranches) {
+      return res.status(400).json({ error: `Plan limit exceeded: ${plan} allows up to ${limits.maxBranches} branch(es)` });
+    }
+    if (limits.maxServices !== null && services.length > limits.maxServices) {
+      return res.status(400).json({ error: `Plan limit exceeded: ${plan} allows up to ${limits.maxServices} service(s)` });
+    }
+
+    const tx = db.transaction(() => {
+      db.prepare("DELETE FROM tenant_branches WHERE tenant_id = ?").run(tenantId);
+      for (const name of branches) {
+        db.prepare("INSERT INTO tenant_branches (id, tenant_id, name, createdAt) VALUES (?, ?, ?, ?)")
+          .run(crypto.randomUUID(), tenantId, name, new Date().toISOString());
+      }
+
+      db.prepare("DELETE FROM tenant_services WHERE tenant_id = ?").run(tenantId);
+      for (const name of services) {
+        db.prepare("INSERT INTO tenant_services (id, tenant_id, name, createdAt) VALUES (?, ?, ?, ?)")
+          .run(crypto.randomUUID(), tenantId, name, new Date().toISOString());
+      }
+
+      const currentSettings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+      const nextSettings = { ...currentSettings, customerTerm };
+      db.prepare("UPDATE tenants SET settings = ? WHERE id = ?").run(JSON.stringify(nextSettings), tenantId);
+    });
+    tx();
+
+    broadcast({ type: "QUEUE_UPDATED" });
+    res.json({ status: "ok" });
+  });
+
   // ===== PDF DOWNLOAD =====
 
   app.get("/api/admin/report/pdf", requireAdmin, async (req, res) => {
@@ -577,7 +751,22 @@ async function startServer() {
     const { name, plan } = req.body;
     const { id } = req.params;
     if (name) db.prepare("UPDATE tenants SET name = ? WHERE id = ?").run((name as string).trim(), id);
-    if (plan) db.prepare("UPDATE tenants SET plan = ? WHERE id = ?").run(plan, id);
+    if (plan) {
+      const normalizedPlan = String(plan).toLowerCase();
+      if (!PLAN_LIMITS[normalizedPlan]) {
+        return res.status(400).json({ error: "Invalid plan. Must be free, starter, or pro" });
+      }
+      const branchCount = (db.prepare("SELECT COUNT(1) as c FROM tenant_branches WHERE tenant_id = ?").get(id) as any).c as number;
+      const serviceCount = (db.prepare("SELECT COUNT(1) as c FROM tenant_services WHERE tenant_id = ?").get(id) as any).c as number;
+      const limits = getPlanLimits(normalizedPlan);
+      if (limits.maxBranches !== null && branchCount > limits.maxBranches) {
+        return res.status(400).json({ error: `Cannot downgrade: tenant has ${branchCount} branches, but ${normalizedPlan} allows ${limits.maxBranches}` });
+      }
+      if (limits.maxServices !== null && serviceCount > limits.maxServices) {
+        return res.status(400).json({ error: `Cannot downgrade: tenant has ${serviceCount} services, but ${normalizedPlan} allows ${limits.maxServices}` });
+      }
+      db.prepare("UPDATE tenants SET plan = ? WHERE id = ?").run(normalizedPlan, id);
+    }
     res.json({ status: "ok" });
   });
 
@@ -643,6 +832,20 @@ async function startServer() {
     res.json(rows);
   });
 
+  // Public ticket status lookup by ticket ID
+  app.get("/api/ticket/:id", (req, res) => {
+    const ticketId = (req.params.id || "").trim().toUpperCase();
+    if (!ticketId) return res.status(400).json({ error: "Ticket ID is required" });
+
+    const inQueue = db.prepare("SELECT * FROM queue WHERE id = ?").get(ticketId) as any;
+    if (inQueue) return res.json({ ticket: inQueue, location: "queue" });
+
+    const inHistory = db.prepare("SELECT * FROM history WHERE id = ?").get(ticketId) as any;
+    if (inHistory) return res.json({ ticket: inHistory, location: "history" });
+
+    return res.status(404).json({ error: "Ticket not found" });
+  });
+
   // ===== REPORTING HELPERS =====
   const getTenant = (tenantId: string) => {
     return db.prepare('SELECT * FROM tenants WHERE id = ?').get(tenantId) as any;
@@ -656,6 +859,29 @@ async function startServer() {
     }
   };
   ensureDefaultTenant();
+
+  const ensureTenantCatalog = (tenantId: string) => {
+    const branchCount = (db.prepare("SELECT COUNT(1) as c FROM tenant_branches WHERE tenant_id = ?").get(tenantId) as any).c as number;
+    if (branchCount === 0) {
+      for (const name of DEFAULT_BRANCHES) {
+        db.prepare("INSERT OR IGNORE INTO tenant_branches (id, tenant_id, name, createdAt) VALUES (?, ?, ?, ?)")
+          .run(crypto.randomUUID(), tenantId, name, new Date().toISOString());
+      }
+    }
+
+    const serviceCount = (db.prepare("SELECT COUNT(1) as c FROM tenant_services WHERE tenant_id = ?").get(tenantId) as any).c as number;
+    if (serviceCount === 0) {
+      for (const name of DEFAULT_SERVICES) {
+        db.prepare("INSERT OR IGNORE INTO tenant_services (id, tenant_id, name, createdAt) VALUES (?, ?, ?, ?)")
+          .run(crypto.randomUUID(), tenantId, name, new Date().toISOString());
+      }
+    }
+  };
+
+  const allTenantIds = db.prepare("SELECT id FROM tenants").all() as { id: string }[];
+  for (const t of allTenantIds) {
+    ensureTenantCatalog(t.id);
+  }
 
   const generateCSV = async (tenantId: string, fromDate: string, toDate: string) => {
     const rows = db.prepare('SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = "all") ORDER BY completedTime DESC')
@@ -759,6 +985,23 @@ async function startServer() {
     }, delay);
   };
   scheduleDailyReports();
+
+  // Auto-archive old history nightly (default retention: 90 days)
+  const archiveRetentionDays = Number(process.env.ARCHIVE_RETENTION_DAYS || 90);
+  const runHistoryArchive = () => {
+    const days = Number.isFinite(archiveRetentionDays) && archiveRetentionDays > 0
+      ? Math.floor(archiveRetentionDays)
+      : 90;
+    const result = db
+      .prepare("DELETE FROM history WHERE completedTime IS NOT NULL AND completedTime != '' AND date(completedTime) < date('now', ?)")
+      .run(`-${days} days`);
+
+    if (result.changes > 0) {
+      console.log(`[ARCHIVE] Removed ${result.changes} row(s) older than ${days} days`);
+    }
+  };
+  runHistoryArchive();
+  setInterval(runHistoryArchive, 24 * 60 * 60 * 1000);
   
   // Tenant report trigger (admin) - generates CSV and PDF and emails to tenant contact
   app.post('/api/tenants/:id/report', requireAdmin, async (req, res) => {
@@ -817,24 +1060,26 @@ async function startServer() {
     if (!entry.name || typeof entry.name !== "string" || entry.name.trim().length === 0) {
       return res.status(400).json({ error: "Invalid name" });
     }
-    if (!VALID_BRANCHES.has(entry.branch)) {
-      return res.status(400).json({ error: "Invalid branch" });
-    }
-    if (!VALID_SERVICES.has(entry.service)) {
-      return res.status(400).json({ error: "Invalid service" });
-    }
     if (!VALID_PRIORITIES.has(entry.priority)) {
       return res.status(400).json({ error: "Invalid priority" });
     }
 
     const tenantId = entry.tenant_id || 'default';
+    ensureTenantCatalog(tenantId);
+    const catalog = getTenantCatalog(tenantId);
+    if (!catalog.branches.includes(entry.branch)) {
+      return res.status(400).json({ error: "Invalid branch for this tenant" });
+    }
+    if (!catalog.services.includes(entry.service)) {
+      return res.status(400).json({ error: "Invalid service for this tenant" });
+    }
     db.prepare(`
-      INSERT INTO queue (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO queue (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       entry.id, tenantId, entry.name.trim(), entry.branch, entry.service,
       entry.priority, entry.checkInTime, "Waiting",
-      null, null
+      null, null, null
     );
     broadcast({ type: "QUEUE_UPDATED" });
     res.json({ status: "ok" });
@@ -849,16 +1094,44 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.post("/api/reassign", (req, res) => {
+    const { id, branch, service } = req.body;
+    if (!id || typeof id !== "string") {
+      return res.status(400).json({ error: "Ticket ID is required" });
+    }
+    const item = db.prepare("SELECT id, tenant_id FROM queue WHERE id = ?").get(id) as any;
+    if (!item) return res.status(404).json({ error: "Ticket not found in active queue" });
+    const tenantId = item.tenant_id || "default";
+    ensureTenantCatalog(tenantId);
+    const catalog = getTenantCatalog(tenantId);
+    if (!catalog.branches.includes(branch)) {
+      return res.status(400).json({ error: "Invalid branch for this tenant" });
+    }
+    if (!catalog.services.includes(service)) {
+      return res.status(400).json({ error: "Invalid service for this tenant" });
+    }
+
+    db.prepare(
+      "UPDATE queue SET branch = ?, service = ?, priority = 'Priority', status = 'Waiting', calledTime = NULL WHERE id = ?"
+    ).run(branch, service, id);
+
+    broadcast({ type: "QUEUE_UPDATED" });
+    res.json({ status: "ok" });
+  });
+
   app.post("/api/complete", (req, res) => {
-    const { id, completedTime } = req.body;
+    const { id, completedTime, notes } = req.body;
     const item = db.prepare("SELECT * FROM queue WHERE id = ?").get(id) as any;
     if (item) {
+      const sanitizedNotes = typeof notes === "string" && notes.trim().length > 0
+        ? notes.trim().slice(0, 500)
+        : null;
       db.prepare(`
-        INSERT INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         item.id, item.tenant_id || 'default', item.name, item.branch, item.service, item.priority,
-        item.checkInTime, "Completed", item.calledTime, completedTime
+        item.checkInTime, "Completed", item.calledTime, completedTime, sanitizedNotes
       );
       db.prepare("DELETE FROM queue WHERE id = ?").run(id);
       broadcast({ type: "QUEUE_UPDATED" });
@@ -872,11 +1145,11 @@ async function startServer() {
     const item = db.prepare("SELECT * FROM queue WHERE id = ?").get(id) as any;
     if (item) {
       db.prepare(`
-        INSERT INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         item.id, item.tenant_id || 'default', item.name, item.branch, item.service, item.priority,
-        item.checkInTime, "No Show", item.calledTime, new Date().toISOString()
+        item.checkInTime, "No Show", item.calledTime, new Date().toISOString(), null
       );
       db.prepare("DELETE FROM queue WHERE id = ?").run(id);
       broadcast({ type: "QUEUE_UPDATED" });
