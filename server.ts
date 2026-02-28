@@ -309,6 +309,37 @@ async function startServer() {
     res.json(user || { role: 'super_admin', email: 'unknown' });
   });
 
+  app.post("/api/auth/register", async (req, res) => {
+    const { name, organization, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: "Name, email, and password are required" });
+    }
+    if ((password as string).length < 8) {
+      return res.status(400).json({ error: "Password must be at least 8 characters" });
+    }
+
+    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(
+      (email as string).toLowerCase().trim()
+    );
+    if (existing) {
+      return res.status(409).json({ error: "An account with this email already exists" });
+    }
+
+    const hash = await bcrypt.hash(password, 12);
+    const userId = crypto.randomUUID();
+    const tenantId = crypto.randomUUID();
+    db.prepare(
+      "INSERT INTO users (id, email, password_hash, role, tenant_id, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(userId, (email as string).toLowerCase().trim(), hash, "tenant_admin", tenantId, new Date().toISOString());
+
+    const token = crypto.randomBytes(32).toString("hex");
+    db.prepare("INSERT INTO admin_sessions (token, createdAt, user_id) VALUES (?, ?, ?)").run(
+      token, new Date().toISOString(), userId
+    );
+
+    res.status(201).json({ token, role: "tenant_admin", email: (email as string).toLowerCase().trim(), organization: organization || "" });
+  });
+
   app.post("/api/auth/forgot-password", async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email is required" });

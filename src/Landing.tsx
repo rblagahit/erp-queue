@@ -138,17 +138,39 @@ const PLANS = [
 ];
 
 export default function Landing({ onEnterApp }: Props) {
+  // Main auth modal
   const [showModal, setShowModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'signin' | 'register'>('signin');
   const [authView, setAuthView] = useState<'login' | 'forgot' | 'reset'>('login');
+
+  // Sign-in form
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Register form
+  const [regName, setRegName] = useState('');
+  const [regOrg, setRegOrg] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirm, setRegConfirm] = useState('');
+  const [regError, setRegError] = useState<string | null>(null);
+  const [regSuccess, setRegSuccess] = useState(false);
+
+  // Forgot / reset
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
   const [resetToken, setResetToken] = useState('');
   const [resetNewPassword, setResetNewPassword] = useState('');
   const [resetConfirm, setResetConfirm] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
+
+  // Super Admin modal (separate)
+  const [showSuperAdmin, setShowSuperAdmin] = useState(false);
+  const [saEmail, setSaEmail] = useState('');
+  const [saPassword, setSaPassword] = useState('');
+  const [saError, setSaError] = useState<string | null>(null);
+
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Detect reset token in URL
@@ -163,15 +185,18 @@ export default function Landing({ onEnterApp }: Props) {
     }
   }, []);
 
-  // Scroll lock when modal is open
+  // Scroll lock when any modal is open
   useEffect(() => {
-    document.body.style.overflow = showModal ? 'hidden' : '';
+    document.body.style.overflow = (showModal || showSuperAdmin) ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [showModal]);
+  }, [showModal, showSuperAdmin]);
 
-  const openLogin = () => {
+  const openModal = (tab: 'signin' | 'register' = 'signin') => {
+    setActiveTab(tab);
     setAuthView('login');
     setLoginError(null);
+    setRegError(null);
+    setRegSuccess(false);
     setEmail('');
     setPassword('');
     setShowModal(true);
@@ -197,6 +222,31 @@ export default function Landing({ onEnterApp }: Props) {
       }
     } catch {
       setLoginError('Login failed. Please check your connection.');
+    }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegError(null);
+    if (regPassword !== regConfirm) { setRegError('Passwords do not match.'); return; }
+    if (regPassword.length < 8) { setRegError('Password must be at least 8 characters.'); return; }
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: regName, organization: regOrg, email: regEmail, password: regPassword }),
+      });
+      if (res.ok) {
+        const { token } = await res.json();
+        localStorage.setItem('adminToken', token);
+        setShowModal(false);
+        onEnterApp();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setRegError(err.error || 'Registration failed. Please try again.');
+      }
+    } catch {
+      setRegError('Registration failed. Please check your connection.');
     }
   };
 
@@ -241,6 +291,33 @@ export default function Landing({ onEnterApp }: Props) {
     }
   };
 
+  const handleSuperAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaError(null);
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: saEmail, password: saPassword }),
+      });
+      if (res.ok) {
+        const { token, role } = await res.json();
+        if (role !== 'super_admin') {
+          setSaError('This login is for super admins only.');
+          return;
+        }
+        localStorage.setItem('adminToken', token);
+        setShowSuperAdmin(false);
+        onEnterApp();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setSaError(err.error || 'Invalid credentials.');
+      }
+    } catch {
+      setSaError('Login failed. Please check your connection.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-white text-slate-800 overflow-x-hidden">
 
@@ -250,9 +327,9 @@ export default function Landing({ onEnterApp }: Props) {
           {/* Logo */}
           <div className="flex flex-col leading-none">
             <span className="font-black text-lg text-[#003366] uppercase tracking-tight">
-              Sun Savings <span className="text-amber-500">Bank</span>
+              Smart <span className="text-amber-500">Queue</span>
             </span>
-            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-[0.2em]">Smart Queue Intelligence</span>
+            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-[0.2em]">Queue Intelligence Platform</span>
           </div>
 
           {/* Desktop Nav */}
@@ -262,21 +339,21 @@ export default function Landing({ onEnterApp }: Props) {
             <a href="#pricing" className="text-xs font-bold text-slate-500 hover:text-[#003366] uppercase tracking-widest transition-colors">Pricing</a>
           </div>
 
-          {/* CTA Buttons */}
-          <div className="hidden md:flex items-center gap-3">
+          {/* CTA Buttons — top right */}
+          <div className="hidden md:flex items-center gap-2">
             <button
               type="button"
-              onClick={openLogin}
+              onClick={() => openModal('signin')}
               className="text-xs font-bold text-[#003366] border border-[#003366]/30 px-4 py-2 rounded-lg hover:bg-[#003366]/5 transition-colors uppercase tracking-widest"
             >
-              Sign In
+              Sign In / Register
             </button>
             <button
               type="button"
               onClick={onEnterApp}
               className="text-xs font-bold bg-[#003366] text-white px-4 py-2 rounded-lg hover:bg-[#002244] transition-colors uppercase tracking-widest shadow-md"
             >
-              Launch App
+              Admin
             </button>
           </div>
 
@@ -300,8 +377,8 @@ export default function Landing({ onEnterApp }: Props) {
             <a href="#how-it-works" onClick={() => setMobileNavOpen(false)} className="text-xs font-bold text-slate-500 uppercase tracking-widest py-2">How It Works</a>
             <a href="#pricing" onClick={() => setMobileNavOpen(false)} className="text-xs font-bold text-slate-500 uppercase tracking-widest py-2">Pricing</a>
             <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
-              <button type="button" onClick={() => { setMobileNavOpen(false); openLogin(); }} className="w-full py-3 text-xs font-bold text-[#003366] border border-[#003366]/30 rounded-lg uppercase tracking-widest">Sign In</button>
-              <button type="button" onClick={() => { setMobileNavOpen(false); onEnterApp(); }} className="w-full py-3 text-xs font-bold bg-[#003366] text-white rounded-lg uppercase tracking-widest">Launch App</button>
+              <button type="button" onClick={() => { setMobileNavOpen(false); openModal('signin'); }} className="w-full py-3 text-xs font-bold text-[#003366] border border-[#003366]/30 rounded-lg uppercase tracking-widest">Sign In / Register</button>
+              <button type="button" onClick={() => { setMobileNavOpen(false); onEnterApp(); }} className="w-full py-3 text-xs font-bold bg-[#003366] text-white rounded-lg uppercase tracking-widest">Admin</button>
             </div>
           </div>
         )}
@@ -334,17 +411,17 @@ export default function Landing({ onEnterApp }: Props) {
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
               <button
                 type="button"
-                onClick={onEnterApp}
+                onClick={() => openModal('register')}
                 className="px-8 py-4 bg-amber-400 hover:bg-amber-300 text-[#003366] font-black rounded-xl text-sm uppercase tracking-widest transition-all shadow-lg shadow-amber-400/30 hover:shadow-amber-400/50 hover:-translate-y-0.5"
               >
-                Launch App — It's Free
+                Get Started Free
               </button>
               <button
                 type="button"
-                onClick={openLogin}
+                onClick={() => openModal('signin')}
                 className="px-8 py-4 bg-white/10 hover:bg-white/20 border border-white/30 text-white font-bold rounded-xl text-sm uppercase tracking-widest transition-all backdrop-blur"
               >
-                Admin Sign In
+                Sign In
               </button>
             </div>
 
@@ -487,7 +564,7 @@ export default function Landing({ onEnterApp }: Props) {
 
                 <button
                   type="button"
-                  onClick={plan.name === 'Free' ? onEnterApp : openLogin}
+                  onClick={() => openModal(plan.name === 'Free' ? 'register' : 'signin')}
                   className={cn(
                     "w-full py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all",
                     plan.highlight
@@ -512,22 +589,22 @@ export default function Landing({ onEnterApp }: Props) {
         <div className="max-w-2xl mx-auto px-6 text-center">
           <h2 className="text-3xl font-black text-white mb-4">Ready to modernize your queue?</h2>
           <p className="text-blue-200 text-sm mb-8 leading-relaxed">
-            Launch the app now — no registration required to try the queue system. Sign in when you're ready to access the admin panel.
+            Create a free account in seconds — no credit card required. Sign in to manage your branch from any device.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button
               type="button"
-              onClick={onEnterApp}
+              onClick={() => openModal('register')}
               className="px-8 py-4 bg-amber-400 hover:bg-amber-300 text-[#003366] font-black rounded-xl text-sm uppercase tracking-widest transition-all shadow-lg"
             >
-              Launch App Free
+              Register Free
             </button>
             <button
               type="button"
-              onClick={openLogin}
+              onClick={() => openModal('signin')}
               className="px-8 py-4 bg-white/10 hover:bg-white/20 border border-white/30 text-white font-bold rounded-xl text-sm uppercase tracking-widest transition-all"
             >
-              Admin Sign In
+              Sign In
             </button>
           </div>
         </div>
@@ -539,24 +616,36 @@ export default function Landing({ onEnterApp }: Props) {
           <div className="flex flex-col md:flex-row justify-between items-center gap-6">
             <div>
               <p className="font-black text-white text-lg uppercase tracking-tight">
-                Sun Savings <span className="text-amber-400">Bank</span>
+                Smart <span className="text-amber-400">Queue</span>
               </p>
-              <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mt-1">Smart Queue Intelligence Platform</p>
+              <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mt-1">Queue Intelligence Platform</p>
             </div>
             <div className="flex gap-8 text-[10px] font-bold uppercase tracking-widest">
               <a href="#features" className="hover:text-white transition-colors">Features</a>
               <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
-              <button type="button" onClick={openLogin} className="hover:text-white transition-colors">Sign In</button>
-              <button type="button" onClick={onEnterApp} className="hover:text-white transition-colors">Launch App</button>
+              <button type="button" onClick={() => openModal('signin')} className="hover:text-white transition-colors">Sign In</button>
+              <button type="button" onClick={() => openModal('register')} className="hover:text-white transition-colors">Register</button>
             </div>
           </div>
           <div className="border-t border-white/10 mt-8 pt-8 text-center text-[10px] text-blue-500">
-            © 2026 Sun Savings Bank. All rights reserved.
+            © 2026 Smart Queue. All rights reserved.
           </div>
         </div>
       </footer>
 
-      {/* ===== AUTH MODAL ===== */}
+      {/* ===== SUPER ADMIN FLOATING BUTTON (bottom-right) ===== */}
+      <button
+        type="button"
+        onClick={() => { setSaEmail(''); setSaPassword(''); setSaError(null); setShowSuperAdmin(true); }}
+        className="fixed bottom-6 right-6 z-40 flex items-center gap-2 bg-[#001a33]/80 hover:bg-[#001a33] border border-white/10 text-white/60 hover:text-white text-[10px] font-bold uppercase tracking-widest px-4 py-2.5 rounded-full backdrop-blur transition-all shadow-lg"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+        </svg>
+        Super Admin
+      </button>
+
+      {/* ===== AUTH MODAL (Sign In / Register / Forgot / Reset) ===== */}
       <AnimatePresence>
         {showModal && (
           <motion.div
@@ -580,11 +669,12 @@ export default function Landing({ onEnterApp }: Props) {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-              className="relative bg-white rounded-3xl shadow-2xl w-full max-w-sm p-8 md:p-10"
+              className="relative bg-white rounded-3xl shadow-2xl w-full max-w-sm p-8 md:p-10 max-h-[90vh] overflow-y-auto"
             >
               {/* Close button */}
               <button
                 type="button"
+                aria-label="Close"
                 onClick={() => setShowModal(false)}
                 className="absolute top-4 right-4 p-2 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
               >
@@ -593,25 +683,56 @@ export default function Landing({ onEnterApp }: Props) {
                 </svg>
               </button>
 
-              {/* Icon + Title */}
-              <div className="text-center mb-8">
-                <div className="inline-flex items-center justify-center w-14 h-14 bg-[#003366] rounded-2xl mb-4 mx-auto">
-                  <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {/* Logo mark */}
+              <div className="text-center mb-6">
+                <div className="inline-flex items-center justify-center w-12 h-12 bg-[#003366] rounded-2xl mb-3 mx-auto">
+                  <svg className="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                 </div>
-                <h2 className="text-xl font-extrabold text-[#003366]">
-                  {authView === 'login' ? 'Admin Sign In' : authView === 'forgot' ? 'Reset Password' : 'Set New Password'}
-                </h2>
-                <p className="text-slate-500 text-xs mt-1">
-                  {authView === 'login' ? 'Restricted to authorized personnel only.'
-                    : authView === 'forgot' ? 'Enter your email to receive a reset link.'
-                    : 'Choose a new password for your account.'}
-                </p>
+                <p className="font-black text-[#003366] text-sm uppercase tracking-widest">Smart Queue</p>
               </div>
 
-              {/* LOGIN */}
+              {/* Tab switcher (only for login view) */}
               {authView === 'login' && (
+                <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('signin'); setLoginError(null); }}
+                    className={cn(
+                      "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
+                      activeTab === 'signin' ? "bg-white text-[#003366] shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('register'); setRegError(null); }}
+                    className={cn(
+                      "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
+                      activeTab === 'register' ? "bg-white text-[#003366] shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    Register Free
+                  </button>
+                </div>
+              )}
+
+              {/* Section title for forgot/reset */}
+              {authView !== 'login' && (
+                <div className="text-center mb-6">
+                  <h2 className="text-lg font-extrabold text-[#003366]">
+                    {authView === 'forgot' ? 'Reset Password' : 'Set New Password'}
+                  </h2>
+                  <p className="text-slate-500 text-xs mt-1">
+                    {authView === 'forgot' ? 'Enter your email to receive a reset link.' : 'Choose a new password for your account.'}
+                  </p>
+                </div>
+              )}
+
+              {/* SIGN IN */}
+              {authView === 'login' && activeTab === 'signin' && (
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Email Address</label>
@@ -619,7 +740,7 @@ export default function Landing({ onEnterApp }: Props) {
                       type="email"
                       value={email}
                       onChange={e => setEmail(e.target.value)}
-                      placeholder="admin@ssb.local"
+                      placeholder="admin@example.com"
                       required
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none transition-all"
                     />
@@ -651,6 +772,90 @@ export default function Landing({ onEnterApp }: Props) {
                 </form>
               )}
 
+              {/* REGISTER */}
+              {authView === 'login' && activeTab === 'register' && (
+                <div>
+                  {regSuccess ? (
+                    <div className="text-center space-y-4 py-4">
+                      <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 rounded-full mx-auto">
+                        <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <p className="text-sm font-bold text-slate-700">Account created!</p>
+                      <p className="text-xs text-slate-500">Redirecting to your dashboard...</p>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleRegister} className="space-y-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Full Name</label>
+                        <input
+                          type="text"
+                          value={regName}
+                          onChange={e => setRegName(e.target.value)}
+                          placeholder="Juan dela Cruz"
+                          required
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Organization / Branch Name</label>
+                        <input
+                          type="text"
+                          value={regOrg}
+                          onChange={e => setRegOrg(e.target.value)}
+                          placeholder="ABC Savings Bank"
+                          required
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Email Address</label>
+                        <input
+                          type="email"
+                          value={regEmail}
+                          onChange={e => setRegEmail(e.target.value)}
+                          placeholder="you@yourorg.com"
+                          required
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Password</label>
+                        <input
+                          type="password"
+                          value={regPassword}
+                          onChange={e => setRegPassword(e.target.value)}
+                          placeholder="Minimum 8 characters"
+                          required
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Confirm Password</label>
+                        <input
+                          type="password"
+                          value={regConfirm}
+                          onChange={e => setRegConfirm(e.target.value)}
+                          placeholder="Repeat password"
+                          required
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none transition-all"
+                        />
+                      </div>
+                      {regError && (
+                        <p className="text-red-500 text-xs font-bold bg-red-50 border border-red-100 rounded-lg px-3 py-2">{regError}</p>
+                      )}
+                      <button type="submit" className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl font-bold text-sm uppercase tracking-widest transition-all shadow-lg shadow-amber-500/20 mt-1">
+                        Create Free Account
+                      </button>
+                      <p className="text-center text-[10px] text-slate-400 pt-1">
+                        By registering you agree to our terms of service.
+                      </p>
+                    </form>
+                  )}
+                </div>
+              )}
+
               {/* FORGOT PASSWORD */}
               {authView === 'forgot' && (
                 <div>
@@ -679,7 +884,7 @@ export default function Landing({ onEnterApp }: Props) {
                           type="email"
                           value={forgotEmail}
                           onChange={e => setForgotEmail(e.target.value)}
-                          placeholder="admin@ssb.local"
+                          placeholder="admin@example.com"
                           required
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none transition-all"
                         />
@@ -746,6 +951,86 @@ export default function Landing({ onEnterApp }: Props) {
                   )}
                 </div>
               )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ===== SUPER ADMIN MODAL ===== */}
+      <AnimatePresence>
+        {showSuperAdmin && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end justify-end p-6"
+          >
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-[#001a33]/60 backdrop-blur-sm"
+              onClick={() => setShowSuperAdmin(false)}
+            />
+
+            {/* Super Admin Card — anchored bottom-right */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+              className="relative bg-[#001a33] border border-white/10 rounded-2xl shadow-2xl w-full max-w-xs p-7"
+            >
+              {/* Close button */}
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setShowSuperAdmin(false)}
+                className="absolute top-3 right-3 p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-9 h-9 bg-amber-500/20 rounded-xl flex items-center justify-center shrink-0">
+                  <svg className="w-4.5 h-4.5 text-amber-400 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-white font-black text-sm">Super Admin</p>
+                  <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Restricted Access</p>
+                </div>
+              </div>
+
+              <form onSubmit={handleSuperAdminLogin} className="space-y-3">
+                <input
+                  type="email"
+                  value={saEmail}
+                  onChange={e => setSaEmail(e.target.value)}
+                  placeholder="super@admin.com"
+                  required
+                  className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/30 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                />
+                <input
+                  type="password"
+                  value={saPassword}
+                  onChange={e => setSaPassword(e.target.value)}
+                  placeholder="Password"
+                  required
+                  className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/30 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                />
+                {saError && (
+                  <p className="text-red-400 text-xs font-bold bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{saError}</p>
+                )}
+                <button type="submit" className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-[#001a33] rounded-xl font-black text-xs uppercase tracking-widest transition-all">
+                  Access Super Admin
+                </button>
+              </form>
             </motion.div>
           </motion.div>
         )}
