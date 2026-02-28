@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 
 interface Props {
-  onEnterApp: () => void;
+  onEnterApp: (token?: string) => void;
 }
 
 const FEATURES = [
@@ -230,6 +230,7 @@ export default function Landing({ onEnterApp }: Props) {
   const [saEmail, setSaEmail] = useState('');
   const [saPassword, setSaPassword] = useState('');
   const [saError, setSaError] = useState<string | null>(null);
+  const [demoLoading, setDemoLoading] = useState(false);
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [liveStats, setLiveStats] = useState<{ totalTransactions: number; totalTenants: number; avgWaitMinutes: number | null } | null>(null);
@@ -276,7 +277,7 @@ export default function Landing({ onEnterApp }: Props) {
     e.preventDefault();
     setLoginError(null);
     try {
-      const res = await fetch('/api/admin/login', {
+      const res = await fetch('/api/admin/login/tenant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -365,17 +366,13 @@ export default function Landing({ onEnterApp }: Props) {
     e.preventDefault();
     setSaError(null);
     try {
-      const res = await fetch('/api/admin/login', {
+      const res = await fetch('/api/admin/login/super', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: saEmail, password: saPassword }),
       });
       if (res.ok) {
-        const { token, role } = await res.json();
-        if (role !== 'super_admin') {
-          setSaError('This login is for super admins only.');
-          return;
-        }
+        const { token } = await res.json();
         localStorage.setItem('adminToken', token);
         setShowSuperAdmin(false);
         onEnterApp();
@@ -385,6 +382,25 @@ export default function Landing({ onEnterApp }: Props) {
       }
     } catch {
       setSaError('Login failed. Please check your connection.');
+    }
+  };
+
+  const handleStartDemo = async () => {
+    setDemoLoading(true);
+    try {
+      const res = await fetch('/api/demo/start', { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to start demo.');
+      const { token } = await res.json();
+      if (!token) throw new Error('Demo token missing.');
+      localStorage.setItem('adminToken', token);
+      onEnterApp(token);
+    } catch (err: any) {
+      setLoginError(err?.message || 'Unable to launch demo.');
+      setActiveTab('signin');
+      setAuthView('login');
+      setShowModal(true);
+    } finally {
+      setDemoLoading(false);
     }
   };
 
@@ -421,10 +437,10 @@ export default function Landing({ onEnterApp }: Props) {
             </button>
             <button
               type="button"
-              onClick={onEnterApp}
+              onClick={() => { window.location.href = '/tenant-admin-login'; }}
               className="text-xs font-bold bg-[#003366] text-white px-4 py-2 rounded-lg hover:bg-[#002244] transition-colors uppercase tracking-widest shadow-md"
             >
-              Admin
+              Tenant Admin
             </button>
           </div>
 
@@ -451,7 +467,7 @@ export default function Landing({ onEnterApp }: Props) {
             <a href="#faq" onClick={() => setMobileNavOpen(false)} className="text-xs font-bold text-slate-500 uppercase tracking-widest py-2">FAQ</a>
             <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
               <button type="button" onClick={() => { setMobileNavOpen(false); openModal('signin'); }} className="w-full py-3 text-xs font-bold text-[#003366] border border-[#003366]/30 rounded-lg uppercase tracking-widest">Sign In / Register</button>
-              <button type="button" onClick={() => { setMobileNavOpen(false); onEnterApp(); }} className="w-full py-3 text-xs font-bold bg-[#003366] text-white rounded-lg uppercase tracking-widest">Admin</button>
+              <button type="button" onClick={() => { setMobileNavOpen(false); window.location.href = '/tenant-admin-login'; }} className="w-full py-3 text-xs font-bold bg-[#003366] text-white rounded-lg uppercase tracking-widest">Tenant Admin</button>
             </div>
           </div>
         )}
@@ -491,10 +507,10 @@ export default function Landing({ onEnterApp }: Props) {
               </button>
               <button
                 type="button"
-                onClick={() => openModal('signin')}
+                onClick={handleStartDemo}
                 className="px-8 py-4 bg-white/10 hover:bg-white/20 border border-white/30 text-white font-bold rounded-xl text-sm uppercase tracking-widest transition-all backdrop-blur"
               >
-                Sign In
+                {demoLoading ? 'Launching Demo…' : 'Live Demo'}
               </button>
             </div>
 
@@ -826,7 +842,7 @@ export default function Landing({ onEnterApp }: Props) {
       {/* ===== SUPER ADMIN FLOATING BUTTON (bottom-right) ===== */}
       <button
         type="button"
-        onClick={() => { setSaEmail(''); setSaPassword(''); setSaError(null); setShowSuperAdmin(true); }}
+        onClick={() => { window.location.href = '/super-admin-login'; }}
         className="fixed bottom-6 right-6 z-40 flex items-center gap-2 bg-[#001a33]/80 hover:bg-[#001a33] border border-white/10 text-white/60 hover:text-white text-[10px] font-bold uppercase tracking-widest px-4 py-2.5 rounded-full backdrop-blur transition-all shadow-lg"
       >
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

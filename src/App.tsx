@@ -46,10 +46,12 @@ const SLA_THRESHOLD_MINUTES = 10;
 
 interface AppProps {
   onGoToLanding?: () => void;
+  initialView?: 'client' | 'teller' | 'display' | 'analytics' | 'admin';
+  loginRole?: 'tenant_admin' | 'super_admin';
 }
 
-export default function App({ onGoToLanding }: AppProps = {}) {
-  const [view, setView] = useState<'client' | 'teller' | 'display' | 'analytics' | 'admin'>('teller');
+export default function App({ onGoToLanding, initialView = 'teller', loginRole = 'tenant_admin' }: AppProps = {}) {
+  const [view, setView] = useState<'client' | 'teller' | 'display' | 'analytics' | 'admin'>(initialView);
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [history, setHistory] = useState<QueueEntry[]>([]);
   const [tenantId, setTenantId] = useState('default');
@@ -122,6 +124,12 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   const [catalogBranchesText, setCatalogBranchesText] = useState('');
   const [catalogServicesText, setCatalogServicesText] = useState('');
   const [catalogSaving, setCatalogSaving] = useState(false);
+  const [adminArea, setAdminArea] = useState<'dashboard' | 'settings' | 'management'>('dashboard');
+  const [companyName, setCompanyName] = useState('');
+  const [industry, setIndustry] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
   const [clientBranch, setClientBranch] = useState(DEFAULT_BRANCHES[0]);
   const [clientService, setClientService] = useState(DEFAULT_SERVICES[0]);
   const [clientPriority, setClientPriority] = useState<'Regular' | 'Priority'>('Regular');
@@ -135,6 +143,14 @@ export default function App({ onGoToLanding }: AppProps = {}) {
   };
 
   const termCopy = CUSTOMER_TERMS[customerTerm] || CUSTOMER_TERMS.customer;
+
+  const generateTicketId = () => {
+    const hasUUID = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function';
+    const raw = hasUUID
+      ? crypto.randomUUID().replace(/-/g, '')
+      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.toUpperCase();
+    return `SQ-${raw.slice(0, 8).toUpperCase()}`;
+  };
 
   const fetchData = async () => {
     const token = localStorage.getItem('adminToken');
@@ -252,6 +268,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       loadIPs();
       loadSettings();
       loadSmtp();
+      loadProfile();
       loadAdminCatalog();
     }
   }, [view, adminToken]);
@@ -347,6 +364,46 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         setSmtpTo(d.to || '');
       }
     } catch {}
+  };
+
+  const loadProfile = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/profile', { headers: { 'x-admin-token': t } });
+      if (res.ok) {
+        const d = await res.json();
+        setCompanyName(d.companyName || '');
+        setIndustry(d.industry || '');
+        setContactEmail(d.contactEmail || '');
+        setContactPhone(d.contactPhone || '');
+      }
+    } catch {}
+  };
+
+  const saveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    setProfileSaving(true);
+    try {
+      const res = await fetch('/api/admin/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ companyName, industry, contactEmail, contactPhone }),
+      });
+      if (res.ok) {
+        showNotification('Company profile saved.');
+        await loadProfile();
+        if (currentUserRole === 'super_admin') await loadAdminTenants();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to save profile.' }));
+        showNotification(err.error || 'Failed to save profile.', true);
+      }
+    } catch {
+      showNotification('Failed to save profile. Check connection.', true);
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   const applyCatalog = (d: any) => {
@@ -583,12 +640,13 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     e.preventDefault();
     setAdminLoginError(null);
     try {
-      const res = await fetch('/api/admin/login', {
+      const loginEndpoint = loginRole === 'super_admin' ? '/api/admin/login/super' : '/api/admin/login/tenant';
+      const res = await fetch(loginEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: adminEmail, password: adminPassword })
       });
-        if (res.ok) {
+      if (res.ok) {
           const { token } = await res.json();
           setAdminToken(token);
           localStorage.setItem('adminToken', token);
@@ -597,6 +655,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
           loadIPs(token);
           loadSettings(token);
           loadSmtp(token);
+          loadProfile(token);
           loadCatalog(token);
           loadAdminCatalog(token);
           fetch('/api/auth/me', { headers: { 'x-admin-token': token } })
@@ -831,7 +890,7 @@ export default function App({ onGoToLanding }: AppProps = {}) {
     if (adminToken) headers['x-admin-token'] = adminToken;
 
     const entry: QueueEntry = {
-      id: 'SQ-' + crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase(),
+      id: generateTicketId(),
       name,
       branch: clientBranch,
       service: clientService,
@@ -862,8 +921,9 @@ export default function App({ onGoToLanding }: AppProps = {}) {
         const errData = await res.json().catch(() => ({ error: 'Check-in failed' }));
         showNotification(errData.error || 'Check-in failed. Please try again.', true);
       }
-    } catch {
-      showNotification('Check-in failed. Please check your connection.', true);
+    } catch (err: any) {
+      console.error('Check-in request error:', err);
+      showNotification(err?.message ? `Check-in failed: ${err.message}` : 'Check-in failed. Please check your connection.', true);
     }
   };
 
@@ -1055,6 +1115,20 @@ export default function App({ onGoToLanding }: AppProps = {}) {
       waiting: queue.filter(q => q.status === 'Waiting' && q.branch === item.branch).length,
     }));
   }, [queue]);
+
+  const adminSummary = useMemo(() => {
+    const waiting = queue.filter(q => q.status === 'Waiting').length;
+    const processing = queue.filter(q => q.status === 'Processing').length;
+    const today = history.filter(h => h.completedTime && new Date(h.completedTime).toDateString() === new Date().toDateString()).length;
+    return { waiting, processing, today };
+  }, [queue, history]);
+
+  const setupChecklist = useMemo(() => {
+    const profileDone = !!companyName.trim() && !!industry.trim() && !!contactEmail.trim() && !!contactPhone.trim();
+    const operationsDone = branches.length > 0 && services.length > 0;
+    const configDone = ipList.length > 0 && !!smtpHost.trim() && !!smtpTo.trim();
+    return { profileDone, operationsDone, configDone };
+  }, [companyName, industry, contactEmail, contactPhone, branches, services, ipList, smtpHost, smtpTo]);
 
   const formatDuration = (ms: number) => {
     const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -1528,11 +1602,24 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                       </svg>
                     </div>
                     <h2 className="text-2xl font-extrabold text-[#003366]">
-                      {authView === 'login' ? 'Admin Access' : authView === 'forgot' ? 'Reset Password' : 'Set New Password'}
+                      {authView === 'login'
+                        ? (loginRole === 'super_admin' ? 'Super Admin Access' : 'Tenant Admin Access')
+                        : authView === 'forgot' ? 'Reset Password' : 'Set New Password'}
                     </h2>
                     <p className="text-slate-500 mt-2 text-sm">
-                      {authView === 'login' ? 'Restricted to authorized personnel only.' : authView === 'forgot' ? 'Enter your email to receive a reset link.' : 'Choose a new password for your account.'}
+                      {authView === 'login'
+                        ? (loginRole === 'super_admin'
+                            ? 'Restricted to super administrators only.'
+                            : 'Restricted to tenant administrators only.')
+                        : authView === 'forgot' ? 'Enter your email to receive a reset link.' : 'Choose a new password for your account.'}
                     </p>
+                    {authView === 'login' && (
+                      <p className="text-[10px] text-slate-400 mt-2">
+                        {loginRole === 'super_admin'
+                          ? <a href="/tenant-admin-login" className="underline hover:text-[#003366]">Go to Tenant Admin Login</a>
+                          : <a href="/super-admin-login" className="underline hover:text-[#003366]">Go to Super Admin Login</a>}
+                      </p>
+                    )}
                   </div>
 
                   {/* LOGIN FORM */}
@@ -1695,7 +1782,98 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                     </button>
                   </div>
 
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="white-card rounded-2xl p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">Waiting</p>
+                      <p className="text-2xl font-black text-[#003366]">{adminSummary.waiting}</p>
+                    </div>
+                    <div className="white-card rounded-2xl p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">Processing</p>
+                      <p className="text-2xl font-black text-blue-600">{adminSummary.processing}</p>
+                    </div>
+                    <div className="white-card rounded-2xl p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">Completed Today</p>
+                      <p className="text-2xl font-black text-green-600">{adminSummary.today}</p>
+                    </div>
+                    <div className="white-card rounded-2xl p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">Avg Wait</p>
+                      <p className="text-2xl font-black text-amber-600">{analytics.awt}m</p>
+                    </div>
+                  </div>
+
+                  <div className="white-card rounded-2xl p-3 flex items-center gap-2">
+                    <button type="button" onClick={() => setAdminArea('dashboard')} className={cn("px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest", adminArea === 'dashboard' ? "bg-[#003366] text-white" : "text-slate-500 hover:bg-slate-50")}>Dashboard</button>
+                    <button type="button" onClick={() => setAdminArea('settings')} className={cn("px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest", adminArea === 'settings' ? "bg-[#003366] text-white" : "text-slate-500 hover:bg-slate-50")}>Settings</button>
+                    {currentUserRole === 'super_admin' && (
+                      <button type="button" onClick={() => setAdminArea('management')} className={cn("px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest", adminArea === 'management' ? "bg-[#003366] text-white" : "text-slate-500 hover:bg-slate-50")}>Management</button>
+                    )}
+                  </div>
+
+                  {adminArea === 'dashboard' && (
+                    <div className="white-card rounded-2xl p-6 space-y-4">
+                      <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Quick Setup Walkthrough</h4>
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
+                          <div>
+                            <p className="text-xs font-black text-[#003366]">1. Company Profile</p>
+                            <p className="text-[11px] text-slate-500">Add company name, industry, contact email, and phone.</p>
+                          </div>
+                          <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.profileDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.profileDone ? 'Done' : 'Pending'}</span>
+                        </div>
+                        <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
+                          <div>
+                            <p className="text-xs font-black text-[#003366]">2. Operations Setup</p>
+                            <p className="text-[11px] text-slate-500">Set industry language, then add branches and service sections.</p>
+                          </div>
+                          <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.operationsDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.operationsDone ? 'Done' : 'Pending'}</span>
+                        </div>
+                        <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
+                          <div>
+                            <p className="text-xs font-black text-[#003366]">3. Security & Notifications</p>
+                            <p className="text-[11px] text-slate-500">Add branch IPs, configure SMTP, and set report recipient email.</p>
+                          </div>
+                          <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.configDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.configDone ? 'Done' : 'Pending'}</span>
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => setAdminArea('settings')} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest">
+                        Open Settings
+                      </button>
+                    </div>
+                  )}
+
+                  {adminArea === 'settings' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                    {/* COMPANY PROFILE PANEL */}
+                    <div className="white-card rounded-2xl p-6 space-y-5">
+                      <div className="border-b pb-3">
+                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Company Profile</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Set your organization identity and contact details.</p>
+                      </div>
+                      <form onSubmit={saveProfile} className="space-y-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Name</label>
+                          <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Acme Cooperative" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Industry</label>
+                          <input value={industry} onChange={e => setIndustry(e.target.value)} placeholder="Banking, Hospital, Government..." className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contact Email</label>
+                            <input type="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="ops@company.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contact Number</label>
+                            <input value={contactPhone} onChange={e => setContactPhone(e.target.value)} placeholder="+63 912 345 6789" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                        </div>
+                        <button type="submit" disabled={profileSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
+                          {profileSaving ? 'Saving…' : 'Save Company Profile'}
+                        </button>
+                      </form>
+                    </div>
 
                     {/* IP WHITELIST PANEL */}
                     <div className="white-card rounded-2xl p-6 space-y-5">
@@ -2118,9 +2296,10 @@ export default function App({ onGoToLanding }: AppProps = {}) {
                     </div>
 
                   </div>
+                  )}
 
                   {/* ===== SUPER ADMIN PANELS ===== */}
-                  {currentUserRole === 'super_admin' && (
+                  {currentUserRole === 'super_admin' && adminArea === 'management' && (
                     <div className="space-y-6">
                       <div className="flex items-center gap-3 pt-2">
                         <div className="h-px flex-1 bg-amber-200"></div>

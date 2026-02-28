@@ -306,6 +306,10 @@ async function startServer() {
     res: express.Response,
     next: express.NextFunction
   ) => {
+    // Authenticated admins can always submit tickets (kiosk IP limits apply to public access)
+    const token = req.headers["x-admin-token"] as string | undefined;
+    if (token && getUserFromToken(token)) return next();
+
     const whitelist = (
       db.prepare("SELECT ip FROM ip_whitelist").all() as { ip: string }[]
     ).map((r) => r.ip);
@@ -376,7 +380,11 @@ async function startServer() {
   const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
   const LOGIN_MAX_ATTEMPTS = 5;
 
-  app.post("/api/admin/login", async (req, res) => {
+  const handleAdminLogin = async (
+    req: express.Request,
+    res: express.Response,
+    requiredRole?: "tenant_admin" | "super_admin"
+  ) => {
     const ip = getClientIP(req);
     const now = Date.now();
     const rec = loginAttempts.get(ip);
@@ -402,6 +410,13 @@ async function startServer() {
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
+    if (requiredRole && user.role !== requiredRole) {
+      return res.status(403).json({
+        error: requiredRole === "super_admin"
+          ? "Super admin credentials required"
+          : "Tenant admin credentials required",
+      });
+    }
 
     loginAttempts.delete(ip);
 
@@ -412,7 +427,12 @@ async function startServer() {
     db.prepare("UPDATE users SET lastLoginAt = ? WHERE id = ?").run(new Date().toISOString(), user.id);
 
     res.json({ token, role: user.role, email: user.email });
-  });
+  };
+
+  // Backward-compatible login endpoint (no role restriction)
+  app.post("/api/admin/login", async (req, res) => handleAdminLogin(req, res));
+  app.post("/api/admin/login/tenant", async (req, res) => handleAdminLogin(req, res, "tenant_admin"));
+  app.post("/api/admin/login/super", async (req, res) => handleAdminLogin(req, res, "super_admin"));
 
   app.post("/api/admin/logout", requireAdmin, (req, res) => {
     const token = req.headers["x-admin-token"] as string;
@@ -427,9 +447,10 @@ async function startServer() {
   app.get("/api/auth/me", requireAdmin, (req, res) => {
     const token = req.headers["x-admin-token"] as string;
     const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
-    if (!session?.user_id) return res.json({ role: 'super_admin', email: 'legacy' });
+    if (!session?.user_id) return res.status(401).json({ error: "Invalid or expired session" });
     const user = db.prepare("SELECT id, email, role, tenant_id FROM users WHERE id = ?").get(session.user_id) as any;
-    res.json(user || { role: 'super_admin', email: 'unknown' });
+    if (!user) return res.status(401).json({ error: "Invalid or expired session" });
+    res.json(user);
   });
 
   app.post("/api/auth/register", async (req, res) => {
@@ -613,6 +634,40 @@ async function startServer() {
     if (from) smtp.from = from;
     const newSettings = { ...currentSettings, smtp, email_contact: to || currentSettings.email_contact || '' };
     db.prepare("UPDATE tenants SET settings = ? WHERE id = ?").run(JSON.stringify(newSettings), dbUser.tenant_id);
+    res.json({ status: "ok" });
+  });
+
+  app.get("/api/admin/profile", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const tenant = db.prepare("SELECT name, settings FROM tenants WHERE id = ?").get(dbUser.tenant_id) as any;
+    const settings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    res.json({
+      companyName: tenant?.name || "",
+      industry: settings?.industry || "",
+      contactEmail: settings?.contact_email || settings?.email_contact || "",
+      contactPhone: settings?.contact_phone || "",
+    });
+  });
+
+  app.post("/api/admin/profile", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const { companyName, industry, contactEmail, contactPhone } = req.body;
+
+    const tenant = db.prepare("SELECT settings FROM tenants WHERE id = ?").get(dbUser.tenant_id) as any;
+    const currentSettings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    const nextSettings = {
+      ...currentSettings,
+      industry: typeof industry === "string" ? industry.trim().slice(0, 120) : "",
+      contact_email: typeof contactEmail === "string" ? contactEmail.trim().slice(0, 160) : "",
+      contact_phone: typeof contactPhone === "string" ? contactPhone.trim().slice(0, 40) : "",
+    };
+
+    db.prepare("UPDATE tenants SET settings = ? WHERE id = ?").run(JSON.stringify(nextSettings), dbUser.tenant_id);
+    if (typeof companyName === "string" && companyName.trim()) {
+      db.prepare("UPDATE tenants SET name = ? WHERE id = ?").run(companyName.trim().slice(0, 160), dbUser.tenant_id);
+    }
     res.json({ status: "ok" });
   });
 
@@ -897,6 +952,89 @@ async function startServer() {
   for (const t of allTenantIds) {
     ensureTenantCatalog(t.id);
   }
+
+  app.post("/api/demo/start", async (_req, res) => {
+    const demoTenantId = "demo-tenant";
+    const demoUserEmail = "demo@smartqueue.local";
+    const nowIso = new Date().toISOString();
+
+    db.prepare(
+      "INSERT OR IGNORE INTO tenants (id, name, slug, settings, plan, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(
+      demoTenantId,
+      "Smart Queue Demo Organization",
+      "smart-queue-demo",
+      JSON.stringify({
+        industry: "Banking",
+        customerTerm: "customer",
+        contact_email: "demo@smartqueue.local",
+        contact_phone: "+63 900 000 0000",
+      }),
+      "starter",
+      nowIso
+    );
+    ensureTenantCatalog(demoTenantId);
+
+    let demoUser = db.prepare("SELECT id FROM users WHERE email = ?").get(demoUserEmail) as any;
+    if (!demoUser) {
+      const demoUserId = crypto.randomUUID();
+      const demoHash = await bcrypt.hash(crypto.randomUUID(), 10);
+      db.prepare(
+        "INSERT INTO users (id, email, password_hash, role, tenant_id, name, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(demoUserId, demoUserEmail, demoHash, "tenant_admin", demoTenantId, "Demo Admin", nowIso);
+      demoUser = { id: demoUserId };
+    }
+
+    db.prepare("DELETE FROM queue WHERE tenant_id = ?").run(demoTenantId);
+    db.prepare("DELETE FROM history WHERE tenant_id = ?").run(demoTenantId);
+
+    const now = Date.now();
+    const mkIso = (minsAgo: number) => new Date(now - minsAgo * 60 * 1000).toISOString();
+    const queueSamples = [
+      { id: "SQ-DEMO001", name: "Juan Dela Cruz", branch: "Carcar Branch", service: "Withdrawal", priority: "Priority", checkInTime: mkIso(18), status: "Waiting", calledTime: null },
+      { id: "SQ-DEMO002", name: "Maria Santos", branch: "Carcar Branch", service: "Cash/Check Deposit", priority: "Regular", checkInTime: mkIso(12), status: "Waiting", calledTime: null },
+      { id: "SQ-DEMO003", name: "Pedro Reyes", branch: "Moalboal Branch", service: "Customer Service", priority: "Regular", checkInTime: mkIso(9), status: "Processing", calledTime: mkIso(3) },
+    ];
+    for (const q of queueSamples) {
+      db.prepare(
+        "INSERT OR REPLACE INTO queue (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(q.id, demoTenantId, q.name, q.branch, q.service, q.priority, q.checkInTime, q.status, q.calledTime, null, null);
+    }
+
+    const historySamples = [
+      { id: "SQ-HIST001", name: "Ana Lim", branch: "Carcar Branch", service: "Withdrawal", priority: "Regular", checkInMins: 55, calledMins: 40, completedMins: 35 },
+      { id: "SQ-HIST002", name: "Carlo Ong", branch: "Carcar Branch", service: "Cash/Check Deposit", priority: "Priority", checkInMins: 48, calledMins: 32, completedMins: 27 },
+      { id: "SQ-HIST003", name: "Liza Cruz", branch: "Moalboal Branch", service: "Account Opening", priority: "Regular", checkInMins: 44, calledMins: 24, completedMins: 16 },
+      { id: "SQ-HIST004", name: "Ben Tan", branch: "Carcar Branch", service: "Loans", priority: "Regular", checkInMins: 38, calledMins: 21, completedMins: 12 },
+      { id: "SQ-HIST005", name: "Nina Sy", branch: "Moalboal Branch", service: "Customer Service", priority: "Priority", checkInMins: 30, calledMins: 15, completedMins: 8 },
+    ];
+    for (const h of historySamples) {
+      db.prepare(
+        "INSERT OR REPLACE INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        h.id,
+        demoTenantId,
+        h.name,
+        h.branch,
+        h.service,
+        h.priority,
+        mkIso(h.checkInMins),
+        "Completed",
+        mkIso(h.calledMins),
+        mkIso(h.completedMins),
+        "Demo transaction"
+      );
+    }
+
+    const token = crypto.randomBytes(32).toString("hex");
+    db.prepare("INSERT INTO admin_sessions (token, createdAt, user_id) VALUES (?, ?, ?)").run(
+      token, new Date().toISOString(), demoUser.id
+    );
+
+    broadcast({ type: "QUEUE_UPDATED" });
+    broadcast({ type: "HISTORY_UPDATED" });
+    res.json({ token, role: "tenant_admin", demo: true, tenant_id: demoTenantId });
+  });
 
   const generateCSV = async (tenantId: string, fromDate: string, toDate: string) => {
     const rows = db.prepare('SELECT * FROM history WHERE date(completedTime) >= date(?) AND date(completedTime) <= date(?) AND (tenant_id = ? OR ? = "all") ORDER BY completedTime DESC')

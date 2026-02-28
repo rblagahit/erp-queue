@@ -100,6 +100,20 @@ function Root() {
   if (ticketMatch) {
     return <TicketStatusPage ticketId={ticketMatch[1]} />;
   }
+  const isTenantAdminLogin = /^\/tenant-admin-login\/?$/i.test(window.location.pathname);
+  const isSuperAdminLogin = /^\/super-admin-login\/?$/i.test(window.location.pathname);
+  if (isTenantAdminLogin || isSuperAdminLogin) {
+    return (
+      <App
+        initialView="admin"
+        loginRole={isSuperAdminLogin ? 'super_admin' : 'tenant_admin'}
+        onGoToLanding={() => {
+          window.history.replaceState({}, '', '/');
+          window.location.reload();
+        }}
+      />
+    );
+  }
 
   const [page, setPage] = useState<'landing' | 'app'>('landing');
 
@@ -117,7 +131,7 @@ function Root() {
   if (page === 'app') {
     return <App onGoToLanding={() => setPage('landing')} />;
   }
-  return <Landing onEnterApp={() => setPage('app')} />;
+  return <Landing onEnterApp={(token?: string) => { if (token) localStorage.setItem('adminToken', token); setPage('app'); }} />;
 }
 
 createRoot(document.getElementById('root')!).render(
