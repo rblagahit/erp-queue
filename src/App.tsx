@@ -132,6 +132,19 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [companyLogoUrl, setCompanyLogoUrl] = useState('');
   const [logoUploading, setLogoUploading] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [billingMe, setBillingMe] = useState<any>(null);
+  const [billingOverview, setBillingOverview] = useState<any>(null);
+  const [billingSubmissions, setBillingSubmissions] = useState<any[]>([]);
+  const [billingSettings, setBillingSettings] = useState<any>({ bankName: '', accountName: '', accountNumber: '', instructions: '', qrUrl: '', graceDays: 5 });
+  const [billingSettingsSaving, setBillingSettingsSaving] = useState(false);
+  const [billingQrDataUrl, setBillingQrDataUrl] = useState('');
+  const [paymentPlan, setPaymentPlan] = useState<'starter' | 'pro'>('starter');
+  const [paymentMonths, setPaymentMonths] = useState(1);
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
+  const [paymentProofDataUrl, setPaymentProofDataUrl] = useState('');
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const [billingReviewBusy, setBillingReviewBusy] = useState<string | null>(null);
   const [clientBranch, setClientBranch] = useState(DEFAULT_BRANCHES[0]);
   const [clientService, setClientService] = useState(DEFAULT_SERVICES[0]);
   const [clientPriority, setClientPriority] = useState<'Regular' | 'Priority'>('Regular');
@@ -272,8 +285,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       loadSmtp();
       loadProfile();
       loadAdminCatalog();
+      loadBillingMe();
+      if (currentUserRole === 'super_admin') {
+        loadBillingOverview();
+        loadBillingSubmissions();
+        loadBillingSettings();
+      }
     }
-  }, [view, adminToken]);
+  }, [view, adminToken, currentUserRole]);
 
   useEffect(() => {
     if (view === 'admin' && adminToken && currentUserRole === 'super_admin') {
@@ -442,6 +461,175 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       showNotification('Failed to save profile. Check connection.', true);
     } finally {
       setProfileSaving(false);
+    }
+  };
+
+  const loadBillingMe = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/billing/me', { headers: { 'x-admin-token': t } });
+      if (res.ok) {
+        const d = await res.json();
+        setBillingMe(d);
+      }
+    } catch {}
+  };
+
+  const loadBillingOverview = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/billing/overview', { headers: { 'x-admin-token': t } });
+      if (res.ok) setBillingOverview(await res.json());
+    } catch {}
+  };
+
+  const loadBillingSubmissions = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/billing/submissions?status=pending', { headers: { 'x-admin-token': t } });
+      if (res.ok) setBillingSubmissions(await res.json());
+    } catch {}
+  };
+
+  const loadBillingSettings = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/billing/settings', { headers: { 'x-admin-token': t } });
+      if (res.ok) setBillingSettings(await res.json());
+    } catch {}
+  };
+
+  const saveBillingSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    setBillingSettingsSaving(true);
+    try {
+      const payload = {
+        ...billingSettings,
+        qrDataUrl: billingQrDataUrl || undefined,
+      };
+      const res = await fetch('/api/admin/billing/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setBillingSettings(d.config || billingSettings);
+        setBillingQrDataUrl('');
+        showNotification('Billing settings saved.');
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to save billing settings.' }));
+        showNotification(err.error || 'Failed to save billing settings.', true);
+      }
+    } catch {
+      showNotification('Failed to save billing settings.', true);
+    } finally {
+      setBillingSettingsSaving(false);
+    }
+  };
+
+  const submitPaymentProof = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    if (!paymentProofDataUrl) {
+      showNotification('Upload payment proof image first.', true);
+      return;
+    }
+    if (!paymentReference.trim()) {
+      showNotification('Reference code is required.', true);
+      return;
+    }
+    setPaymentSubmitting(true);
+    try {
+      const res = await fetch('/api/billing/submit-proof', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({
+          desiredPlan: paymentPlan,
+          periodMonths: paymentMonths,
+          referenceCode: paymentReference,
+          notes: paymentNotes,
+          proofDataUrl: paymentProofDataUrl,
+        }),
+      });
+      if (res.ok) {
+        showNotification('Payment proof submitted. Awaiting confirmation.');
+        setPaymentReference('');
+        setPaymentNotes('');
+        setPaymentProofDataUrl('');
+        setPaymentMonths(1);
+        await loadBillingMe();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to submit payment proof.' }));
+        showNotification(err.error || 'Failed to submit payment proof.', true);
+      }
+    } catch {
+      showNotification('Failed to submit payment proof.', true);
+    } finally {
+      setPaymentSubmitting(false);
+    }
+  };
+
+  const confirmPaymentSubmission = async (submissionId: string) => {
+    if (!adminToken) return;
+    const monthsRaw = window.prompt('Confirm subscription period in months (1-12):', '1');
+    const monthsParsed = Math.max(1, Math.min(12, Number(monthsRaw || 1)));
+    if (!Number.isFinite(monthsParsed)) return;
+    setBillingReviewBusy(`confirm-${submissionId}`);
+    try {
+      const res = await fetch(`/api/admin/billing/submissions/${submissionId}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ periodMonths: monthsParsed }),
+      });
+      if (res.ok) {
+        const d = await res.json().catch(() => ({}));
+        showNotification('Payment confirmed and receipt generated.');
+        if (d?.receiptPdfUrl) {
+          window.open(d.receiptPdfUrl, '_blank');
+        }
+        await loadBillingSubmissions();
+        await loadBillingOverview();
+        await loadBillingMe();
+        await loadAdminTenants();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to confirm payment.' }));
+        showNotification(err.error || 'Failed to confirm payment.', true);
+      }
+    } catch {
+      showNotification('Failed to confirm payment.', true);
+    } finally {
+      setBillingReviewBusy(null);
+    }
+  };
+
+  const rejectPaymentSubmission = async (submissionId: string) => {
+    if (!adminToken) return;
+    const note = window.prompt('Reason for rejection:', 'Payment details are incomplete.');
+    if (note === null) return;
+    setBillingReviewBusy(`reject-${submissionId}`);
+    try {
+      const res = await fetch(`/api/admin/billing/submissions/${submissionId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ notes: note }),
+      });
+      if (res.ok) {
+        showNotification('Payment submission rejected.');
+        await loadBillingSubmissions();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to reject payment.' }));
+        showNotification(err.error || 'Failed to reject payment.', true);
+      }
+    } catch {
+      showNotification('Failed to reject payment.', true);
+    } finally {
+      setBillingReviewBusy(null);
     }
   };
 
@@ -1850,34 +2038,167 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                   </div>
 
                   {adminArea === 'dashboard' && (
-                    <div className="white-card rounded-2xl p-6 space-y-4">
-                      <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Quick Setup Walkthrough</h4>
-                      <div className="space-y-3">
-                        <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
-                          <div>
-                            <p className="text-xs font-black text-[#003366]">1. Company Profile</p>
-                            <p className="text-[11px] text-slate-500">Add company name, industry, contact email, and phone.</p>
+                    <div className="space-y-6">
+                      <div className="white-card rounded-2xl p-6 space-y-4">
+                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Quick Setup Walkthrough</h4>
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
+                            <div>
+                              <p className="text-xs font-black text-[#003366]">1. Company Profile</p>
+                              <p className="text-[11px] text-slate-500">Add company name, industry, contact email, and phone.</p>
+                            </div>
+                            <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.profileDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.profileDone ? 'Done' : 'Pending'}</span>
                           </div>
-                          <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.profileDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.profileDone ? 'Done' : 'Pending'}</span>
-                        </div>
-                        <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
-                          <div>
-                            <p className="text-xs font-black text-[#003366]">2. Operations Setup</p>
-                            <p className="text-[11px] text-slate-500">Set industry language, then add branches and service sections.</p>
+                          <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
+                            <div>
+                              <p className="text-xs font-black text-[#003366]">2. Operations Setup</p>
+                              <p className="text-[11px] text-slate-500">Set industry language, then add branches and service sections.</p>
+                            </div>
+                            <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.operationsDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.operationsDone ? 'Done' : 'Pending'}</span>
                           </div>
-                          <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.operationsDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.operationsDone ? 'Done' : 'Pending'}</span>
-                        </div>
-                        <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
-                          <div>
-                            <p className="text-xs font-black text-[#003366]">3. Security & Notifications</p>
-                            <p className="text-[11px] text-slate-500">Add branch IPs, configure SMTP, and set report recipient email.</p>
+                          <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
+                            <div>
+                              <p className="text-xs font-black text-[#003366]">3. Security & Notifications</p>
+                              <p className="text-[11px] text-slate-500">Add branch IPs, configure SMTP, and set report recipient email.</p>
+                            </div>
+                            <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.configDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.configDone ? 'Done' : 'Pending'}</span>
                           </div>
-                          <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.configDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.configDone ? 'Done' : 'Pending'}</span>
                         </div>
+                        <button type="button" onClick={() => setAdminArea('settings')} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest">
+                          Open Settings
+                        </button>
                       </div>
-                      <button type="button" onClick={() => setAdminArea('settings')} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest">
-                        Open Settings
-                      </button>
+
+                      {currentUserRole === 'super_admin' && (
+                        <>
+                          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                            <div className="white-card rounded-2xl p-4">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Paid Tenants</p>
+                              <p className="text-2xl font-black text-[#003366]">{billingOverview?.paidTenants ?? 0}</p>
+                            </div>
+                            <div className="white-card rounded-2xl p-4">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">MRR</p>
+                              <p className="text-2xl font-black text-green-600">
+                                {new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(Number(billingOverview?.mrr || 0))}
+                              </p>
+                            </div>
+                            <div className="white-card rounded-2xl p-4">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Due Soon</p>
+                              <p className="text-2xl font-black text-amber-600">{billingOverview?.dueSoon ?? 0}</p>
+                            </div>
+                            <div className="white-card rounded-2xl p-4">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Overdue</p>
+                              <p className="text-2xl font-black text-red-600">{billingOverview?.overdue ?? 0}</p>
+                            </div>
+                            <div className="white-card rounded-2xl p-4">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Renewed (Month)</p>
+                              <p className="text-2xl font-black text-blue-600">{billingOverview?.renewedThisMonth ?? 0}</p>
+                            </div>
+                            <div className="white-card rounded-2xl p-4">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Downgraded (Month)</p>
+                              <p className="text-2xl font-black text-slate-700">{billingOverview?.downgradedThisMonth ?? 0}</p>
+                            </div>
+                          </div>
+
+                          <div className="white-card rounded-2xl p-6 space-y-4">
+                            <div className="flex justify-between items-center border-b pb-3">
+                              <div>
+                                <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Pending Payment Proofs</h4>
+                                <p className="text-[10px] text-slate-400 mt-0.5">Confirm to activate subscription and send receipt by email.</p>
+                              </div>
+                              <button type="button" onClick={() => loadBillingSubmissions()} className="text-[10px] font-bold text-slate-400 hover:text-[#003366] uppercase tracking-widest transition-colors">Refresh</button>
+                            </div>
+                            {billingSubmissions.length === 0 ? (
+                              <p className="text-xs text-slate-400 text-center py-4">No pending payment submissions.</p>
+                            ) : (
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left">
+                                  <thead>
+                                    <tr className="border-b border-slate-100">
+                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Tenant</th>
+                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Plan</th>
+                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Amount</th>
+                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Reference</th>
+                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Proof</th>
+                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Submitted</th>
+                                      <th className="pb-2" scope="col"><span className="sr-only">Actions</span></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-50">
+                                    {billingSubmissions.map((s) => (
+                                      <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                                        <td className="py-3 pr-4 text-xs font-bold text-[#003366]">{s.tenantName || s.tenant_id}</td>
+                                        <td className="py-3 pr-4 text-xs uppercase font-bold text-slate-600">{s.desired_plan}</td>
+                                        <td className="py-3 pr-4 text-xs font-bold text-slate-700">
+                                          {new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(Number(s.amount || 0))}
+                                        </td>
+                                        <td className="py-3 pr-4 text-[11px] font-mono text-slate-500">{s.reference_code || '—'}</td>
+                                        <td className="py-3 pr-4">
+                                          {s.proof_url ? (
+                                            <a href={s.proof_url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-amber-600 hover:text-amber-700">
+                                              View Proof
+                                            </a>
+                                          ) : (
+                                            <span className="text-[10px] text-slate-300">No file</span>
+                                          )}
+                                        </td>
+                                        <td className="py-3 pr-4 text-[10px] text-slate-400">{s.submittedAt ? new Date(s.submittedAt).toLocaleString() : '—'}</td>
+                                        <td className="py-3">
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => confirmPaymentSubmission(s.id)}
+                                              disabled={billingReviewBusy !== null}
+                                              className="text-[9px] font-black uppercase text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded-md transition-colors disabled:opacity-40"
+                                            >
+                                              {billingReviewBusy === `confirm-${s.id}` ? 'Confirming…' : 'Confirm'}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => rejectPaymentSubmission(s.id)}
+                                              disabled={billingReviewBusy !== null}
+                                              className="text-[9px] font-black uppercase text-red-500 border border-red-200 px-2 py-1 rounded-md hover:bg-red-50 transition-colors disabled:opacity-40"
+                                            >
+                                              {billingReviewBusy === `reject-${s.id}` ? 'Rejecting…' : 'Reject'}
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+
+                      {currentUserRole !== 'super_admin' && (
+                        <div className="white-card rounded-2xl p-6 space-y-4">
+                          <div className="border-b pb-3">
+                            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Subscription Status</h4>
+                            <p className="text-[10px] text-slate-400 mt-0.5">Upgrade plan by submitting proof of payment.</p>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Current Plan</p>
+                              <p className="text-sm font-black text-[#003366] uppercase">{billingMe?.subscription?.plan || billingMe?.tenant?.plan || 'free'}</p>
+                            </div>
+                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Status</p>
+                              <p className="text-sm font-black text-amber-600 uppercase">{billingMe?.subscription?.status || 'free'}</p>
+                            </div>
+                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Period End</p>
+                              <p className="text-sm font-black text-slate-700">{billingMe?.subscription?.period_end ? new Date(billingMe.subscription.period_end).toLocaleDateString() : '—'}</p>
+                            </div>
+                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Grace Days</p>
+                              <p className="text-sm font-black text-slate-700">{billingMe?.subscription?.grace_days ?? billingMe?.billing?.graceDays ?? 5}</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -2360,6 +2681,166 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         </button>
                       </form>
                     </div>
+
+                    {/* TENANT BILLING PANEL */}
+                    {currentUserRole !== 'super_admin' && (
+                      <div className="white-card rounded-2xl p-6 space-y-5">
+                        <div className="border-b pb-3">
+                          <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Subscription & Payment</h4>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Submit your payment proof for plan activation.</p>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1">
+                          <p><span className="font-bold text-slate-500 uppercase text-[10px]">Bank:</span> {billingMe?.billing?.bankName || 'Not configured'}</p>
+                          <p><span className="font-bold text-slate-500 uppercase text-[10px]">Account Name:</span> {billingMe?.billing?.accountName || 'Not configured'}</p>
+                          <p><span className="font-bold text-slate-500 uppercase text-[10px]">Account Number:</span> {billingMe?.billing?.accountNumber || 'Not configured'}</p>
+                          {billingMe?.billing?.instructions && (
+                            <p><span className="font-bold text-slate-500 uppercase text-[10px]">Instructions:</span> {billingMe.billing.instructions}</p>
+                          )}
+                        </div>
+
+                        {billingMe?.billing?.qrUrl && (
+                          <div className="flex justify-center">
+                            <img src={billingMe.billing.qrUrl} alt="Payment QR code" className="w-40 h-40 rounded-xl border border-slate-200 bg-white p-2" />
+                          </div>
+                        )}
+
+                        <form onSubmit={submitPaymentProof} className="space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Plan</label>
+                              <select
+                                value={paymentPlan}
+                                onChange={e => setPaymentPlan(e.target.value as 'starter' | 'pro')}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                              >
+                                <option value="starter">Starter</option>
+                                <option value="pro">Pro</option>
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Months</label>
+                              <select
+                                value={paymentMonths}
+                                onChange={e => setPaymentMonths(Number(e.target.value))}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                              >
+                                <option value={1}>1 Month</option>
+                                <option value={3}>3 Months</option>
+                                <option value={6}>6 Months</option>
+                                <option value={12}>12 Months</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Reference Code</label>
+                            <input
+                              value={paymentReference}
+                              onChange={e => setPaymentReference(e.target.value)}
+                              placeholder="Transfer reference number"
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Notes (optional)</label>
+                            <textarea
+                              rows={2}
+                              value={paymentNotes}
+                              onChange={e => setPaymentNotes(e.target.value)}
+                              placeholder="Payment details"
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Payment Proof</label>
+                            <label className="inline-flex text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
+                              {paymentProofDataUrl ? 'Replace Proof' : 'Upload Proof'}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  const reader = new FileReader();
+                                  reader.onload = () => setPaymentProofDataUrl(String(reader.result || ''));
+                                  reader.readAsDataURL(file);
+                                  e.currentTarget.value = '';
+                                }}
+                              />
+                            </label>
+                          </div>
+                          {paymentProofDataUrl && (
+                            <img src={paymentProofDataUrl} alt="Payment proof preview" className="w-full max-h-64 object-contain bg-slate-50 border border-slate-200 rounded-xl p-2" />
+                          )}
+                          <button type="submit" disabled={paymentSubmitting} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
+                            {paymentSubmitting ? 'Submitting…' : 'Submit Payment Proof'}
+                          </button>
+                        </form>
+                      </div>
+                    )}
+
+                    {/* SUPER ADMIN BILLING SETTINGS PANEL */}
+                    {currentUserRole === 'super_admin' && (
+                      <div className="white-card rounded-2xl p-6 space-y-5">
+                        <div className="border-b pb-3">
+                          <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Billing Configuration</h4>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Set bank details, payment QR, and grace days for auto-downgrade.</p>
+                        </div>
+                        <form onSubmit={saveBillingSettings} className="space-y-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Bank Name</label>
+                            <input value={billingSettings.bankName || ''} onChange={e => setBillingSettings((prev: any) => ({ ...prev, bankName: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Account Name</label>
+                              <input value={billingSettings.accountName || ''} onChange={e => setBillingSettings((prev: any) => ({ ...prev, accountName: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Account Number</label>
+                              <input value={billingSettings.accountNumber || ''} onChange={e => setBillingSettings((prev: any) => ({ ...prev, accountNumber: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Instructions</label>
+                            <textarea rows={3} value={billingSettings.instructions || ''} onChange={e => setBillingSettings((prev: any) => ({ ...prev, instructions: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Grace Days</label>
+                            <input type="number" min={1} max={30} value={billingSettings.graceDays ?? 5} onChange={e => setBillingSettings((prev: any) => ({ ...prev, graceDays: Number(e.target.value) }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Payment QR Code</label>
+                            <div className="flex items-center gap-3">
+                              {billingSettings.qrUrl ? (
+                                <img src={billingSettings.qrUrl} alt="Billing QR code" className="w-16 h-16 rounded-lg border border-slate-200 bg-white p-1" />
+                              ) : (
+                                <div className="w-16 h-16 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase">No QR</div>
+                              )}
+                              <label className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
+                                {billingQrDataUrl ? 'QR Ready' : 'Upload QR'}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    const reader = new FileReader();
+                                    reader.onload = () => setBillingQrDataUrl(String(reader.result || ''));
+                                    reader.readAsDataURL(file);
+                                    e.currentTarget.value = '';
+                                  }}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                          <button type="submit" disabled={billingSettingsSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
+                            {billingSettingsSaving ? 'Saving…' : 'Save Billing Configuration'}
+                          </button>
+                        </form>
+                      </div>
+                    )}
 
                   </div>
                   )}

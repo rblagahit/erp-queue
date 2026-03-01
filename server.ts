@@ -26,6 +26,13 @@ const TENANT_LOGO_DIR = path.join(__dirname, "tenant-logos");
 if (!fs.existsSync(TENANT_LOGO_DIR)) {
   fs.mkdirSync(TENANT_LOGO_DIR, { recursive: true });
 }
+const BILLING_FILES_DIR = path.join(__dirname, "billing-files");
+const PAYMENT_PROOFS_DIR = path.join(BILLING_FILES_DIR, "proofs");
+const RECEIPTS_DIR = path.join(BILLING_FILES_DIR, "receipts");
+const BILLING_QR_DIR = path.join(BILLING_FILES_DIR, "qr");
+for (const dir of [BILLING_FILES_DIR, PAYMENT_PROOFS_DIR, RECEIPTS_DIR, BILLING_QR_DIR]) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
 
 const DEFAULT_BRANCHES = [
   "Carcar Branch", "Moalboal Branch", "Talisay Branch", "Carbon Branch",
@@ -41,6 +48,11 @@ const PLAN_LIMITS: Record<string, { maxBranches: number | null; maxServices: num
   free: { maxBranches: 1, maxServices: 5 },
   starter: { maxBranches: 9, maxServices: 15 },
   pro: { maxBranches: null, maxServices: null },
+};
+const PLAN_PRICES: Record<string, number> = {
+  free: 0,
+  starter: 999,
+  pro: 2499,
 };
 
 async function startServer() {
@@ -61,6 +73,7 @@ async function startServer() {
 
   app.use(express.json());
   app.use("/tenant-logos", express.static(TENANT_LOGO_DIR));
+  app.use("/billing-files", express.static(BILLING_FILES_DIR));
 
   // ===== DATABASE =====
   const db = new Database(path.join(__dirname, "ssb_queue.db"));
@@ -145,6 +158,45 @@ async function startServer() {
       createdAt TEXT,
       UNIQUE(tenant_id, name)
     );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      tenant_id TEXT PRIMARY KEY,
+      plan TEXT NOT NULL DEFAULT 'free',
+      status TEXT NOT NULL DEFAULT 'active',
+      period_start TEXT,
+      period_end TEXT,
+      grace_days INTEGER NOT NULL DEFAULT 5,
+      amount REAL NOT NULL DEFAULT 0,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS payment_submissions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      desired_plan TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      reference_code TEXT,
+      proof_url TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      notes TEXT,
+      submittedAt TEXT,
+      reviewedAt TEXT,
+      reviewed_by TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS receipts (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      payment_submission_id TEXT,
+      receipt_no TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      plan TEXT,
+      period_start TEXT,
+      period_end TEXT,
+      pdf_url TEXT,
+      createdAt TEXT,
+      created_by TEXT
+    );
   `);
 
   // Ensure tenant columns exist (for older DBs)
@@ -180,6 +232,9 @@ async function startServer() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_queue_tenant_status ON queue(tenant_id, status);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_branches_tenant ON tenant_branches(tenant_id, name);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_services_tenant ON tenant_services(tenant_id, name);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_payment_submissions_status ON payment_submissions(status, submittedAt);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_payment_submissions_tenant ON payment_submissions(tenant_id, submittedAt);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_receipts_tenant ON receipts(tenant_id, createdAt);`);
 
   // Seed default super_admin user if none exist
   const userCount = (db.prepare('SELECT COUNT(1) as c FROM users').get() as any).c as number;
@@ -272,6 +327,29 @@ async function startServer() {
   const getPlanLimits = (planRaw?: string) => {
     const plan = (planRaw || "free").toLowerCase();
     return PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+  };
+
+  const getPlanPrice = (planRaw?: string) => {
+    const plan = (planRaw || "free").toLowerCase();
+    return PLAN_PRICES[plan] ?? 0;
+  };
+
+  const getBillingConfig = () => {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'billing_config'").get() as any;
+    const parsed = row?.value ? JSON.parse(row.value) : {};
+    return {
+      bankName: parsed?.bankName || "",
+      accountName: parsed?.accountName || "",
+      accountNumber: parsed?.accountNumber || "",
+      instructions: parsed?.instructions || "",
+      qrUrl: parsed?.qrUrl || "",
+      graceDays: Number.isFinite(parsed?.graceDays) ? Number(parsed.graceDays) : 5,
+    };
+  };
+
+  const saveBillingConfig = (config: any) => {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('billing_config', ?)")
+      .run(JSON.stringify(config));
   };
 
   const getTenantCatalog = (tenantId: string) => {
@@ -488,6 +566,7 @@ async function startServer() {
       "INSERT INTO tenants (id, name, slug, settings, plan, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(tenantId, orgName, orgSlug, JSON.stringify({}), 'free', new Date().toISOString());
     ensureTenantCatalog(tenantId);
+    ensureTenantSubscription(tenantId);
 
     const token = crypto.randomBytes(32).toString("hex");
     db.prepare("INSERT INTO admin_sessions (token, createdAt, user_id) VALUES (?, ?, ?)").run(
@@ -735,6 +814,243 @@ async function startServer() {
     res.json(logos);
   });
 
+  app.get("/api/billing/me", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const tenant = db.prepare("SELECT id, name, plan, settings FROM tenants WHERE id = ?").get(dbUser.tenant_id) as any;
+    const subscription = db.prepare("SELECT * FROM subscriptions WHERE tenant_id = ?").get(dbUser.tenant_id) as any;
+    const recentSubmissions = db.prepare("SELECT * FROM payment_submissions WHERE tenant_id = ? ORDER BY submittedAt DESC LIMIT 5").all(dbUser.tenant_id);
+    const billing = getBillingConfig();
+    const settings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    res.json({
+      tenant: {
+        id: tenant?.id,
+        name: tenant?.name,
+        plan: tenant?.plan || "free",
+        contactEmail: settings?.contact_email || "",
+      },
+      subscription: subscription || null,
+      pricing: PLAN_PRICES,
+      billing,
+      submissions: recentSubmissions,
+    });
+  });
+
+  app.post("/api/billing/submit-proof", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser || dbUser.role === "super_admin") return res.status(401).json({ error: "Tenant admin session required" });
+    const desiredPlan = String(req.body?.desiredPlan || "").toLowerCase();
+    const referenceCode = typeof req.body?.referenceCode === "string" ? req.body.referenceCode.trim().slice(0, 120) : "";
+    const notes = typeof req.body?.notes === "string" ? req.body.notes.trim().slice(0, 500) : "";
+    const dataUrl = typeof req.body?.proofDataUrl === "string" ? req.body.proofDataUrl : "";
+    if (!["starter", "pro"].includes(desiredPlan)) return res.status(400).json({ error: "Invalid paid plan" });
+    if (!referenceCode) return res.status(400).json({ error: "Reference code is required" });
+    if (!dataUrl.startsWith("data:image/")) return res.status(400).json({ error: "Payment proof image is required" });
+
+    const match = dataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
+    if (!match) return res.status(400).json({ error: "Unsupported image format" });
+    const mime = match[1].toLowerCase();
+    const base64 = match[2];
+    const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+    const buffer = Buffer.from(base64, "base64");
+    if (buffer.length > 4 * 1024 * 1024) return res.status(400).json({ error: "Proof image too large (max 4MB)" });
+
+    const id = crypto.randomUUID();
+    const filename = `${dbUser.tenant_id}-${Date.now()}.${ext}`;
+    const filePath = path.join(PAYMENT_PROOFS_DIR, filename);
+    fs.writeFileSync(filePath, buffer);
+    const proofUrl = `/billing-files/proofs/${filename}`;
+
+    db.prepare(
+      "INSERT INTO payment_submissions (id, tenant_id, desired_plan, amount, reference_code, proof_url, status, notes, submittedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      id,
+      dbUser.tenant_id,
+      desiredPlan,
+      getPlanPrice(desiredPlan),
+      referenceCode,
+      proofUrl,
+      "pending",
+      notes,
+      new Date().toISOString()
+    );
+
+    res.status(201).json({ status: "ok", id });
+  });
+
+  app.get("/api/admin/billing/settings", requireSuperAdmin, (_req, res) => {
+    res.json(getBillingConfig());
+  });
+
+  app.post("/api/admin/billing/settings", requireSuperAdmin, (req, res) => {
+    const current = getBillingConfig();
+    const next: any = {
+      ...current,
+      bankName: typeof req.body?.bankName === "string" ? req.body.bankName.trim().slice(0, 160) : current.bankName,
+      accountName: typeof req.body?.accountName === "string" ? req.body.accountName.trim().slice(0, 160) : current.accountName,
+      accountNumber: typeof req.body?.accountNumber === "string" ? req.body.accountNumber.trim().slice(0, 160) : current.accountNumber,
+      instructions: typeof req.body?.instructions === "string" ? req.body.instructions.trim().slice(0, 1000) : current.instructions,
+      graceDays: Number.isFinite(Number(req.body?.graceDays)) ? Math.max(1, Math.min(30, Number(req.body.graceDays))) : current.graceDays,
+    };
+
+    const qrDataUrl = typeof req.body?.qrDataUrl === "string" ? req.body.qrDataUrl : "";
+    if (qrDataUrl) {
+      const match = qrDataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
+      if (!match) return res.status(400).json({ error: "Invalid QR image" });
+      const mime = match[1].toLowerCase();
+      const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+      const buffer = Buffer.from(match[2], "base64");
+      const filename = `billing-qr-${Date.now()}.${ext}`;
+      const filePath = path.join(BILLING_QR_DIR, filename);
+      fs.writeFileSync(filePath, buffer);
+      next.qrUrl = `/billing-files/qr/${filename}`;
+    }
+
+    saveBillingConfig(next);
+    res.json({ status: "ok", config: next });
+  });
+
+  app.get("/api/admin/billing/overview", requireSuperAdmin, (_req, res) => {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const plus7 = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const startMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+    const paidTenants = (db.prepare("SELECT COUNT(*) as c FROM subscriptions WHERE plan IN ('starter','pro') AND status IN ('active','due_soon','overdue')").get() as any).c as number;
+    const mrr = (db.prepare("SELECT COALESCE(SUM(amount),0) as s FROM subscriptions WHERE plan IN ('starter','pro') AND status IN ('active','due_soon','overdue')").get() as any).s as number;
+    const dueSoon = (db.prepare("SELECT COUNT(*) as c FROM subscriptions WHERE period_end IS NOT NULL AND date(period_end) >= date(?) AND date(period_end) <= date(?) AND status IN ('active','due_soon')").get(todayStr, plus7) as any).c as number;
+    const overdue = (db.prepare("SELECT COUNT(*) as c FROM subscriptions WHERE period_end IS NOT NULL AND date(period_end) < date(?) AND status = 'overdue'").get(todayStr) as any).c as number;
+    const renewedThisMonth = (db.prepare("SELECT COUNT(*) as c FROM receipts WHERE createdAt >= ?").get(startMonth) as any).c as number;
+    const downgradedThisMonth = (db.prepare("SELECT COUNT(*) as c FROM subscriptions WHERE status = 'downgraded_free' AND updatedAt >= ?").get(startMonth) as any).c as number;
+    res.json({ paidTenants, mrr, dueSoon, overdue, renewedThisMonth, downgradedThisMonth });
+  });
+
+  app.get("/api/admin/billing/submissions", requireSuperAdmin, (req, res) => {
+    const status = typeof req.query.status === "string" ? req.query.status : "";
+    const rows = status
+      ? db.prepare(`
+          SELECT ps.*, t.name as tenantName
+          FROM payment_submissions ps
+          LEFT JOIN tenants t ON t.id = ps.tenant_id
+          WHERE ps.status = ?
+          ORDER BY ps.submittedAt DESC
+        `).all(status)
+      : db.prepare(`
+          SELECT ps.*, t.name as tenantName
+          FROM payment_submissions ps
+          LEFT JOIN tenants t ON t.id = ps.tenant_id
+          ORDER BY ps.submittedAt DESC
+        `).all();
+    res.json(rows);
+  });
+
+  app.post("/api/admin/billing/submissions/:id/reject", requireSuperAdmin, (req, res) => {
+    const { id } = req.params;
+    const notes = typeof req.body?.notes === "string" ? req.body.notes.trim().slice(0, 500) : "";
+    const token = req.headers["x-admin-token"] as string;
+    const reviewer = getUserFromToken(token);
+    db.prepare("UPDATE payment_submissions SET status = 'rejected', reviewedAt = ?, reviewed_by = ?, notes = ? WHERE id = ?")
+      .run(new Date().toISOString(), reviewer?.id || null, notes, id);
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/admin/billing/submissions/:id/confirm", requireSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    const periodMonths = Math.max(1, Math.min(12, Number(req.body?.periodMonths || 1)));
+    const token = req.headers["x-admin-token"] as string;
+    const reviewer = getUserFromToken(token);
+    const submission = db.prepare("SELECT * FROM payment_submissions WHERE id = ?").get(id) as any;
+    if (!submission) return res.status(404).json({ error: "Submission not found" });
+    if (submission.status !== "pending") return res.status(400).json({ error: "Submission already reviewed" });
+
+    const tenant = db.prepare("SELECT * FROM tenants WHERE id = ?").get(submission.tenant_id) as any;
+    if (!tenant) return res.status(400).json({ error: "Tenant not found" });
+
+    const start = new Date();
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + periodMonths);
+    const plan = (submission.desired_plan || "starter").toLowerCase();
+    const amount = Number(submission.amount || getPlanPrice(plan));
+    const billingCfg = getBillingConfig();
+    const graceDays = Number.isFinite(Number(billingCfg.graceDays)) ? Number(billingCfg.graceDays) : 5;
+
+    db.prepare("UPDATE payment_submissions SET status = 'confirmed', reviewedAt = ?, reviewed_by = ? WHERE id = ?")
+      .run(new Date().toISOString(), reviewer?.id || null, id);
+
+    db.prepare(
+      "INSERT INTO subscriptions (tenant_id, plan, status, period_start, period_end, grace_days, amount, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET plan=excluded.plan, status=excluded.status, period_start=excluded.period_start, period_end=excluded.period_end, grace_days=excluded.grace_days, amount=excluded.amount, updatedAt=excluded.updatedAt"
+    ).run(
+      submission.tenant_id,
+      plan,
+      "active",
+      start.toISOString(),
+      end.toISOString(),
+      graceDays,
+      amount,
+      new Date().toISOString()
+    );
+    db.prepare("UPDATE tenants SET plan = ? WHERE id = ?").run(plan, submission.tenant_id);
+
+    const receiptNo = `RCPT-${new Date().toISOString().slice(0, 7).replace("-", "")}-${Date.now().toString().slice(-5)}`;
+    const receiptId = crypto.randomUUID();
+    const receiptPdfPath = path.join(RECEIPTS_DIR, `${receiptNo}.pdf`);
+    const receiptPdfUrl = `/billing-files/receipts/${receiptNo}.pdf`;
+    const pdf = new PDFDocument();
+    const receiptStream = fs.createWriteStream(receiptPdfPath);
+    pdf.pipe(receiptStream);
+    pdf.fontSize(16).text("Smart Queue Payment Receipt", { align: "center" });
+    pdf.moveDown();
+    pdf.fontSize(11).text(`Receipt No: ${receiptNo}`);
+    pdf.text(`Tenant: ${tenant.name || submission.tenant_id}`);
+    pdf.text(`Plan: ${plan.toUpperCase()}`);
+    pdf.text(`Amount: PHP ${amount.toFixed(2)}`);
+    pdf.text(`Period: ${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)}`);
+    pdf.text(`Reference: ${submission.reference_code || "-"}`);
+    pdf.text(`Issued At: ${new Date().toISOString()}`);
+    pdf.end();
+    await new Promise<void>((resolve) => receiptStream.on("finish", () => resolve()));
+
+    db.prepare(
+      "INSERT INTO receipts (id, tenant_id, payment_submission_id, receipt_no, amount, plan, period_start, period_end, pdf_url, createdAt, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      receiptId,
+      submission.tenant_id,
+      id,
+      receiptNo,
+      amount,
+      plan,
+      start.toISOString(),
+      end.toISOString(),
+      receiptPdfUrl,
+      new Date().toISOString(),
+      reviewer?.id || null
+    );
+
+    const tenantSettings = tenant.settings ? JSON.parse(tenant.settings) : {};
+    const recipient = tenantSettings?.contact_email || tenantSettings?.email_contact || null;
+    if (recipient) {
+      try {
+        const smtp = tenantSettings?.smtp || {
+          host: process.env.SMTP_HOST || "localhost",
+          port: Number(process.env.SMTP_PORT || 25),
+          secure: process.env.SMTP_SECURE === "true",
+          auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+        };
+        const transporter = nodemailer.createTransport(smtp as any);
+        await transporter.sendMail({
+          from: tenantSettings?.smtp?.from || process.env.SMTP_FROM || "no-reply@example.com",
+          to: recipient,
+          subject: `Payment Receipt ${receiptNo}`,
+          text: `Thank you for your payment.\n\nReceipt: ${receiptNo}\nPlan: ${plan.toUpperCase()}\nAmount: PHP ${amount.toFixed(2)}\nPeriod: ${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)}.`,
+          attachments: [{ filename: `${receiptNo}.pdf`, path: receiptPdfPath }],
+        });
+      } catch (err) {
+        console.error("[BILLING] Failed to send receipt email", err);
+      }
+    }
+
+    res.json({ status: "ok", receiptNo, receiptPdfUrl });
+  });
+
   app.get("/api/catalog", (req, res) => {
     const token = req.headers["x-admin-token"] as string | undefined;
     const user = token ? getUserFromToken(token) : null;
@@ -893,6 +1209,9 @@ async function startServer() {
         return res.status(400).json({ error: `Cannot downgrade: tenant has ${serviceCount} services, but ${normalizedPlan} allows ${limits.maxServices}` });
       }
       db.prepare("UPDATE tenants SET plan = ? WHERE id = ?").run(normalizedPlan, id);
+      ensureTenantSubscription(id);
+      db.prepare("UPDATE subscriptions SET plan = ?, amount = ?, updatedAt = ? WHERE tenant_id = ?")
+        .run(normalizedPlan, getPlanPrice(normalizedPlan), new Date().toISOString(), id);
     }
     res.json({ status: "ok" });
   });
@@ -1017,6 +1336,31 @@ async function startServer() {
     ensureTenantCatalog(t.id);
   }
 
+  const ensureTenantSubscription = (tenantId: string) => {
+    const tenant = db.prepare("SELECT plan FROM tenants WHERE id = ?").get(tenantId) as any;
+    if (!tenant) return;
+    const existing = db.prepare("SELECT tenant_id FROM subscriptions WHERE tenant_id = ?").get(tenantId) as any;
+    if (!existing) {
+      const now = new Date().toISOString();
+      db.prepare(
+        "INSERT INTO subscriptions (tenant_id, plan, status, period_start, period_end, grace_days, amount, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        tenantId,
+        (tenant.plan || "free").toLowerCase(),
+        "active",
+        now,
+        null,
+        getBillingConfig().graceDays || 5,
+        getPlanPrice(tenant.plan),
+        now
+      );
+    }
+  };
+
+  for (const t of allTenantIds) {
+    ensureTenantSubscription(t.id);
+  }
+
   app.post("/api/demo/start", async (_req, res) => {
     const demoTenantId = "demo-tenant";
     const demoUserEmail = "demo@smartqueue.local";
@@ -1038,6 +1382,7 @@ async function startServer() {
       nowIso
     );
     ensureTenantCatalog(demoTenantId);
+    ensureTenantSubscription(demoTenantId);
 
     let demoUser = db.prepare("SELECT id FROM users WHERE email = ?").get(demoUserEmail) as any;
     if (!demoUser) {
@@ -1202,6 +1547,36 @@ async function startServer() {
     }, delay);
   };
   scheduleDailyReports();
+
+  const runSubscriptionLifecycle = () => {
+    const now = new Date();
+    const rows = db.prepare("SELECT * FROM subscriptions").all() as any[];
+    for (const sub of rows) {
+      if (!sub.period_end) continue;
+      const periodEnd = new Date(sub.period_end);
+      const graceDays = Number.isFinite(Number(sub.grace_days)) ? Number(sub.grace_days) : 5;
+      const downgradeAt = new Date(periodEnd.getTime() + graceDays * 24 * 60 * 60 * 1000);
+      let nextStatus = "active";
+      if (now > downgradeAt) nextStatus = "downgraded_free";
+      else if (now > periodEnd) nextStatus = "overdue";
+      else {
+        const dueSoonAt = new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+        nextStatus = now >= dueSoonAt ? "due_soon" : "active";
+      }
+
+      const currentPlan = (sub.plan || "free").toLowerCase();
+      if (nextStatus === "downgraded_free" && currentPlan !== "free") {
+        db.prepare("UPDATE tenants SET plan = 'free' WHERE id = ?").run(sub.tenant_id);
+        db.prepare("UPDATE subscriptions SET plan = 'free', status = ?, amount = 0, updatedAt = ? WHERE tenant_id = ?")
+          .run(nextStatus, new Date().toISOString(), sub.tenant_id);
+      } else if (sub.status !== nextStatus) {
+        db.prepare("UPDATE subscriptions SET status = ?, updatedAt = ? WHERE tenant_id = ?")
+          .run(nextStatus, new Date().toISOString(), sub.tenant_id);
+      }
+    }
+  };
+  runSubscriptionLifecycle();
+  setInterval(runSubscriptionLifecycle, 6 * 60 * 60 * 1000);
 
   // Auto-archive old history nightly (default retention: 90 days)
   const archiveRetentionDays = Number(process.env.ARCHIVE_RETENTION_DAYS || 90);
