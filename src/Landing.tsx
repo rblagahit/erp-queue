@@ -94,6 +94,13 @@ const CLIENT_LOGOS = [
   { name: 'Pampanga FCB', abbr: 'PF', bg: 'bg-pink-800' },
 ];
 
+interface PublicLogo {
+  name: string;
+  abbr: string;
+  logoUrl?: string;
+  bg?: string;
+}
+
 const TESTIMONIALS = [
   {
     quote: "Our average wait time dropped from 22 minutes to under 8 minutes in the first week. The tellers love the live queue view — they can see every branch at a glance.",
@@ -231,6 +238,7 @@ export default function Landing({ onEnterApp }: Props) {
   const [saPassword, setSaPassword] = useState('');
   const [saError, setSaError] = useState<string | null>(null);
   const [demoLoading, setDemoLoading] = useState(false);
+  const [publicLogos, setPublicLogos] = useState<PublicLogo[]>([]);
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [liveStats, setLiveStats] = useState<{ totalTransactions: number; totalTenants: number; avgWaitMinutes: number | null } | null>(null);
@@ -254,6 +262,15 @@ export default function Landing({ onEnterApp }: Props) {
       setShowModal(true);
       window.history.replaceState({}, '', window.location.pathname);
     }
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/logos/public')
+      .then(async (res) => (res.ok ? res.json() : []))
+      .then((rows: PublicLogo[]) => {
+        if (Array.isArray(rows) && rows.length > 0) setPublicLogos(rows);
+      })
+      .catch(() => {});
   }, []);
 
   // Scroll lock when any modal is open
@@ -558,11 +575,15 @@ export default function Landing({ onEnterApp }: Props) {
           <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-white to-transparent z-10 pointer-events-none" />
           {/* Ticker */}
           <div className="sq-ticker flex items-center gap-10">
-            {[...CLIENT_LOGOS, ...CLIENT_LOGOS].map((logo, i) => (
+            {[...(publicLogos.length ? publicLogos : CLIENT_LOGOS), ...(publicLogos.length ? publicLogos : CLIENT_LOGOS)].map((logo, i) => (
               <div key={i} className="flex items-center gap-3 shrink-0 px-4 py-2">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white font-black text-xs shadow-sm ${logo.bg}`}>
-                  {logo.abbr}
-                </div>
+                {logo.logoUrl ? (
+                  <img src={logo.logoUrl} alt={`${logo.name} logo`} className="w-9 h-9 rounded-xl object-cover border border-slate-200 bg-white shadow-sm" />
+                ) : (
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white font-black text-xs shadow-sm ${logo.bg || 'bg-[#003366]'}`}>
+                    {logo.abbr}
+                  </div>
+                )}
                 <span className="font-black text-slate-600 text-sm whitespace-nowrap tracking-tight">{logo.name}</span>
               </div>
             ))}

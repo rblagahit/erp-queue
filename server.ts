@@ -22,6 +22,10 @@ const writeFile = promisify(fs.writeFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const TENANT_LOGO_DIR = path.join(__dirname, "tenant-logos");
+if (!fs.existsSync(TENANT_LOGO_DIR)) {
+  fs.mkdirSync(TENANT_LOGO_DIR, { recursive: true });
+}
 
 const DEFAULT_BRANCHES = [
   "Carcar Branch", "Moalboal Branch", "Talisay Branch", "Carbon Branch",
@@ -56,6 +60,7 @@ async function startServer() {
   });
 
   app.use(express.json());
+  app.use("/tenant-logos", express.static(TENANT_LOGO_DIR));
 
   // ===== DATABASE =====
   const db = new Database(path.join(__dirname, "ssb_queue.db"));
@@ -647,6 +652,7 @@ async function startServer() {
       industry: settings?.industry || "",
       contactEmail: settings?.contact_email || settings?.email_contact || "",
       contactPhone: settings?.contact_phone || "",
+      logoUrl: settings?.logo_url || "",
     });
   });
 
@@ -669,6 +675,64 @@ async function startServer() {
       db.prepare("UPDATE tenants SET name = ? WHERE id = ?").run(companyName.trim().slice(0, 160), dbUser.tenant_id);
     }
     res.json({ status: "ok" });
+  });
+
+  app.post("/api/admin/profile/logo", requireAdmin, (req, res) => {
+    const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+
+    const dataUrl = typeof req.body?.dataUrl === "string" ? req.body.dataUrl : "";
+    if (!dataUrl.startsWith("data:image/")) {
+      return res.status(400).json({ error: "Invalid image data" });
+    }
+    const match = dataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
+    if (!match) return res.status(400).json({ error: "Unsupported image format" });
+
+    const mime = match[1].toLowerCase();
+    const base64 = match[2];
+    const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+    const buffer = Buffer.from(base64, "base64");
+    if (buffer.length > 2 * 1024 * 1024) {
+      return res.status(400).json({ error: "Logo file too large (max 2MB)" });
+    }
+
+    const filename = `${dbUser.tenant_id}-${Date.now()}.${ext}`;
+    const filePath = path.join(TENANT_LOGO_DIR, filename);
+    fs.writeFileSync(filePath, buffer);
+    const logoUrl = `/tenant-logos/${filename}`;
+
+    const tenant = db.prepare("SELECT settings FROM tenants WHERE id = ?").get(dbUser.tenant_id) as any;
+    const currentSettings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    const oldLogoUrl = currentSettings?.logo_url as string | undefined;
+    const nextSettings = { ...currentSettings, logo_url: logoUrl };
+    db.prepare("UPDATE tenants SET settings = ? WHERE id = ?").run(JSON.stringify(nextSettings), dbUser.tenant_id);
+
+    if (oldLogoUrl && oldLogoUrl.startsWith("/tenant-logos/")) {
+      const oldFilePath = path.join(TENANT_LOGO_DIR, oldLogoUrl.replace("/tenant-logos/", ""));
+      try { if (fs.existsSync(oldFilePath)) fs.unlinkSync(oldFilePath); } catch {}
+    }
+
+    res.json({ status: "ok", logoUrl });
+  });
+
+  app.get("/api/logos/public", (_req, res) => {
+    const rows = db.prepare("SELECT name, settings FROM tenants WHERE id != 'default' ORDER BY createdAt DESC LIMIT 40").all() as any[];
+    const logos = rows
+      .map((r) => {
+        const settings = r.settings ? JSON.parse(r.settings) : {};
+        const logoUrl = settings?.logo_url || "";
+        const name = (r.name || "").trim();
+        if (!logoUrl || !name) return null;
+        const abbr = name
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((p: string) => p[0] || "")
+          .join("")
+          .toUpperCase();
+        return { name, logoUrl, abbr: abbr || name.slice(0, 2).toUpperCase() };
+      })
+      .filter(Boolean);
+    res.json(logos);
   });
 
   app.get("/api/catalog", (req, res) => {

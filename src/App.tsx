@@ -129,6 +129,8 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [industry, setIndustry] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [contactPhone, setContactPhone] = useState('');
+  const [companyLogoUrl, setCompanyLogoUrl] = useState('');
+  const [logoUploading, setLogoUploading] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [clientBranch, setClientBranch] = useState(DEFAULT_BRANCHES[0]);
   const [clientService, setClientService] = useState(DEFAULT_SERVICES[0]);
@@ -377,8 +379,45 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         setIndustry(d.industry || '');
         setContactEmail(d.contactEmail || '');
         setContactPhone(d.contactPhone || '');
+        setCompanyLogoUrl(d.logoUrl || '');
       }
     } catch {}
+  };
+
+  const uploadCompanyLogo = async (file: File) => {
+    if (!adminToken) return;
+    if (!file.type.startsWith('image/')) {
+      showNotification('Please upload an image file.', true);
+      return;
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+
+    setLogoUploading(true);
+    try {
+      const res = await fetch('/api/admin/profile/logo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ dataUrl }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setCompanyLogoUrl(d.logoUrl || '');
+        showNotification('Company logo uploaded.');
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to upload logo.' }));
+        showNotification(err.error || 'Failed to upload logo.', true);
+      }
+    } catch {
+      showNotification('Failed to upload logo. Check connection.', true);
+    } finally {
+      setLogoUploading(false);
+    }
   };
 
   const saveProfile = async (e: React.FormEvent) => {
@@ -1852,6 +1891,32 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         <p className="text-[10px] text-slate-400 mt-0.5">Set your organization identity and contact details.</p>
                       </div>
                       <form onSubmit={saveProfile} className="space-y-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Logo</label>
+                          <div className="flex items-center gap-3">
+                            {companyLogoUrl ? (
+                              <img src={companyLogoUrl} alt="Company logo" className="w-14 h-14 rounded-lg object-cover border border-slate-200 bg-white" />
+                            ) : (
+                              <div className="w-14 h-14 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase">
+                                No Logo
+                              </div>
+                            )}
+                            <label className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
+                              {logoUploading ? 'Uploading…' : 'Upload Logo'}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) uploadCompanyLogo(file);
+                                  e.currentTarget.value = '';
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </div>
+
                         <div className="space-y-1">
                           <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Name</label>
                           <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Acme Cooperative" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
