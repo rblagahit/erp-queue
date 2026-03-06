@@ -3,42 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
-
-interface QueueEntry {
-  id: string;
-  name: string;
-  branch: string;
-  service: string;
-  priority: string;
-  sourceChannel?: string | null;
-  slaTargetMinutes?: number | null;
-  checkInTime: string;
-  status: 'Waiting' | 'Processing' | 'Completed' | 'No Show';
-  firstCalledTime?: string | null;
-  calledTime: string | null;
-  completedTime: string | null;
-  reassignCount?: number | null;
-  handledByUserId?: string | null;
-  handledByEmail?: string | null;
-  outcome?: string | null;
-  breachReason?: string | null;
-  noShowReason?: string | null;
-  notes?: string | null;
-}
-
-type QueueApiEntry = QueueEntry & {
-  source_channel?: string | null;
-  sla_target_minutes?: number | null;
-  first_called_time?: string | null;
-  reassign_count?: number | null;
-  handled_by_user_id?: string | null;
-  handled_by_email?: string | null;
-  breach_reason?: string | null;
-  no_show_reason?: string | null;
-};
+import {
+  BREACH_REASON_OPTIONS,
+  NO_SHOW_REASON_OPTIONS,
+  SLA_THRESHOLD_MINUTES,
+  type QueueApiEntry,
+  type QueueEntry,
+} from './features/queue/model';
 
 interface IPEntry {
   ip: string;
@@ -62,22 +36,9 @@ const CUSTOMER_TERMS: Record<string, { singular: string; plural: string; title: 
   patient: { singular: "patient", plural: "patients", title: "Patient" },
   citizen: { singular: "citizen", plural: "citizens", title: "Citizen" },
 };
-const SLA_THRESHOLD_MINUTES = 10;
-const BREACH_REASON_OPTIONS = [
-  'High volume',
-  'Complex case',
-  'Customer unavailable',
-  'System issue',
-  'Staff shortage',
-  'Manual verification',
-];
-const NO_SHOW_REASON_OPTIONS = [
-  'Customer unavailable',
-  'Left the premises',
-  'Called multiple times',
-  'Incomplete requirements',
-  'Requested cancellation',
-];
+
+const AnalyticsPanel = lazy(() => import('./features/dashboard/AnalyticsPanel'));
+const AdminOverviewPanel = lazy(() => import('./features/dashboard/AdminOverviewPanel'));
 
 interface AppProps {
   onGoToLanding?: () => void;
@@ -1902,103 +1863,16 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
           {/* ANALYTICS */}
           {view === 'analytics' && (
-            <motion.section key="analytics" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h2 className="text-2xl font-extrabold text-[#003366]">Performance Analytics</h2>
-                  <p className="text-xs text-slate-400 font-medium">Historical data and service metrics</p>
-                </div>
-                <select
-                  aria-label="Filter analytics by branch"
-                  value={analyticsBranch}
-                  onChange={(e) => setAnalyticsBranch(e.target.value)}
-                  className="white-card text-[11px] font-bold rounded-lg px-4 py-2 outline-none cursor-pointer border border-slate-100"
-                >
-                  <option value="All">All Branches</option>
-                  {branches.map(b => <option key={b} value={b}>{b.replace(' Branch', '')}</option>)}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="white-card p-6 rounded-2xl">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Avg. Wait Time (AWT)</p>
-                  <h3 className="text-3xl font-black text-[#003366] metric-value">{analytics.awt}m</h3>
-                  <p className="text-[9px] text-green-600 font-bold mt-2">↑ Optimizing</p>
-                </div>
-                <div className="white-card p-6 rounded-2xl border-l-4 border-amber-400">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Avg. Service Time (TAT)</p>
-                  <h3 className="text-3xl font-black text-[#003366] metric-value">{analytics.tat}m</h3>
-                  <p className="text-[9px] text-slate-400 font-medium mt-2">Completion duration per {termCopy.singular}</p>
-                </div>
-                <div className="white-card p-6 rounded-2xl">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Total Serviced Today</p>
-                  <h3 className="text-3xl font-black text-[#003366] metric-value">{analytics.total}</h3>
-                  <p className="text-[9px] text-blue-600 font-bold mt-2">Across {branches.length} Locations</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="white-card rounded-2xl p-6">
-                  <h4 className="text-sm font-bold text-[#003366] mb-4 uppercase tracking-wider border-b pb-3">TAT per Service Type</h4>
-                  <div className="space-y-4">
-                    {analytics.tatPerService.map(s => (
-                      <div key={s.name} className="flex justify-between items-center">
-                        <div>
-                          <p className="text-xs font-bold text-slate-700">{s.name}</p>
-                          <p className="text-[9px] text-slate-400 uppercase font-bold">{s.count} Transactions</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-lg font-black text-[#003366]">{s.avg}m</p>
-                          <p className="text-[8px] font-bold text-amber-500 uppercase">Avg TAT</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="white-card rounded-2xl p-6">
-                  <h4 className="text-sm font-bold text-[#003366] mb-4 uppercase tracking-wider border-b pb-3">Service Performance Log</h4>
-                  <div className="overflow-x-auto max-h-[300px] no-scrollbar">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="text-slate-400">
-                          <th className="pb-3 font-semibold">{termCopy.title}</th>
-                          <th className="pb-3 font-semibold">Branch</th>
-                          <th className="pb-3 font-semibold">Wait Time</th>
-                          <th className="pb-3 font-semibold">Service Duration</th>
-                          <th className="pb-3 font-semibold">Outcome</th>
-                          <th className="pb-3 font-semibold">Handled By</th>
-                          <th className="pb-3 font-semibold text-right">Handled At</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50">
-                        {history
-                          .filter(h => analyticsBranch === 'All' || h.branch === analyticsBranch)
-                          .slice(0, 10)
-                          .map(h => {
-                            const wait = h.calledTime && h.checkInTime ? Math.round((new Date(h.calledTime).getTime() - new Date(h.checkInTime).getTime()) / 60000) : 0;
-                            const dur = h.completedTime && h.calledTime ? Math.round((new Date(h.completedTime).getTime() - new Date(h.calledTime).getTime()) / 60000) : 0;
-                            return (
-                              <tr key={h.id} className="text-slate-600">
-                                <td className="py-3 font-bold text-slate-800">{h.name}</td>
-                                <td className="py-3">{h.branch}</td>
-                                <td className="py-3">{wait}m</td>
-                                <td className="py-3 font-bold text-[#003366]">{dur}m</td>
-                                <td className="py-3 uppercase text-[10px] font-bold text-slate-500">{h.outcome || h.status}</td>
-                                <td className="py-3 text-[10px] text-slate-500">{h.handledByEmail || '—'}</td>
-                                <td className="py-3 text-right text-[10px] text-slate-400">
-                                  {h.completedTime ? new Date(h.completedTime).toLocaleTimeString() : ''}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-
-            </motion.section>
+            <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading analytics…</div>}>
+              <AnalyticsPanel
+                analytics={analytics}
+                analyticsBranch={analyticsBranch}
+                branches={branches}
+                history={history}
+                termTitle={termCopy.title}
+                onAnalyticsBranchChange={setAnalyticsBranch}
+              />
+            </Suspense>
           )}
 
           {/* ADMIN PANEL */}
@@ -2294,197 +2168,21 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                   </div>
 
                   {adminArea === 'overview' && (
-                    <div className="space-y-6">
-                      <div className="white-card rounded-2xl p-6 space-y-4">
-                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Quick Setup Walkthrough</h4>
-                        <div className="space-y-3">
-                          <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
-                            <div>
-                              <p className="text-xs font-black text-[#003366]">1. Company Profile</p>
-                              <p className="text-[11px] text-slate-500">Add company name, industry, contact email, and phone.</p>
-                            </div>
-                            <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.profileDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.profileDone ? 'Done' : 'Pending'}</span>
-                          </div>
-                          <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
-                            <div>
-                              <p className="text-xs font-black text-[#003366]">2. Operations Setup</p>
-                              <p className="text-[11px] text-slate-500">Set industry language, then add branches and service sections.</p>
-                            </div>
-                            <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.operationsDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.operationsDone ? 'Done' : 'Pending'}</span>
-                          </div>
-                          <div className="flex items-start justify-between p-3 rounded-xl border border-slate-100">
-                            <div>
-                              <p className="text-xs font-black text-[#003366]">3. Security & Notifications</p>
-                              <p className="text-[11px] text-slate-500">Add branch IPs, configure SMTP, and set report recipient email.</p>
-                            </div>
-                            <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.configDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.configDone ? 'Done' : 'Pending'}</span>
-                          </div>
-                        </div>
-                        <button type="button" onClick={() => setAdminArea('operations')} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest">
-                          Open Operations
-                        </button>
-                      </div>
-
-                      {currentUserRole === 'super_admin' && (
-                        <>
-                          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-                            <div className="white-card rounded-2xl p-4">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Paid Tenants</p>
-                              <p className="text-2xl font-black text-[#003366]">{billingOverview?.paidTenants ?? 0}</p>
-                            </div>
-                            <div className="white-card rounded-2xl p-4">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">MRR</p>
-                              <p className="text-2xl font-black text-green-600">
-                                {new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(Number(billingOverview?.mrr || 0))}
-                              </p>
-                            </div>
-                            <div className="white-card rounded-2xl p-4">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Due Soon</p>
-                              <p className="text-2xl font-black text-amber-600">{billingOverview?.dueSoon ?? 0}</p>
-                            </div>
-                            <div className="white-card rounded-2xl p-4">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Overdue</p>
-                              <p className="text-2xl font-black text-red-600">{billingOverview?.overdue ?? 0}</p>
-                            </div>
-                            <div className="white-card rounded-2xl p-4">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Renewed (Month)</p>
-                              <p className="text-2xl font-black text-blue-600">{billingOverview?.renewedThisMonth ?? 0}</p>
-                            </div>
-                            <div className="white-card rounded-2xl p-4">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Downgraded (Month)</p>
-                              <p className="text-2xl font-black text-slate-700">{billingOverview?.downgradedThisMonth ?? 0}</p>
-                            </div>
-                          </div>
-
-                          <div className="white-card rounded-2xl p-6 space-y-4">
-                            <div className="flex justify-between items-center border-b pb-3">
-                              <div>
-                                <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Pending Payment Proofs</h4>
-                                <p className="text-[10px] text-slate-400 mt-0.5">Confirm to activate subscription and send receipt by email.</p>
-                              </div>
-                              <button type="button" onClick={() => loadBillingSubmissions()} className="text-[10px] font-bold text-slate-400 hover:text-[#003366] uppercase tracking-widest transition-colors">Refresh</button>
-                            </div>
-                            {billingSubmissions.length === 0 ? (
-                              <p className="text-xs text-slate-400 text-center py-4">No pending payment submissions.</p>
-                            ) : (
-                              <div className="overflow-x-auto">
-                                <table className="w-full text-left">
-                                  <thead>
-                                    <tr className="border-b border-slate-100">
-                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Tenant</th>
-                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Plan</th>
-                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Amount</th>
-                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Reference</th>
-                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Proof</th>
-                                      <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Submitted</th>
-                                      <th className="pb-2" scope="col"><span className="sr-only">Actions</span></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-50">
-                                    {billingSubmissions.map((s) => (
-                                      <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                                        <td className="py-3 pr-4 text-xs font-bold text-[#003366]">{s.tenantName || s.tenant_id}</td>
-                                        <td className="py-3 pr-4 text-xs uppercase font-bold text-slate-600">{s.desired_plan}</td>
-                                        <td className="py-3 pr-4 text-xs font-bold text-slate-700">
-                                          {new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(Number(s.amount || 0))}
-                                        </td>
-                                        <td className="py-3 pr-4 text-[11px] font-mono text-slate-500">{s.reference_code || '—'}</td>
-                                        <td className="py-3 pr-4">
-                                          {s.proof_url ? (
-                                            <a href={s.proof_url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-amber-600 hover:text-amber-700">
-                                              View Proof
-                                            </a>
-                                          ) : (
-                                            <span className="text-[10px] text-slate-300">No file</span>
-                                          )}
-                                        </td>
-                                        <td className="py-3 pr-4 text-[10px] text-slate-400">{s.submittedAt ? new Date(s.submittedAt).toLocaleString() : '—'}</td>
-                                        <td className="py-3">
-                                          <div className="flex items-center gap-2">
-                                            <button
-                                              type="button"
-                                              onClick={() => confirmPaymentSubmission(s.id)}
-                                              disabled={billingReviewBusy !== null}
-                                              className="text-[9px] font-black uppercase text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded-md transition-colors disabled:opacity-40"
-                                            >
-                                              {billingReviewBusy === `confirm-${s.id}` ? 'Confirming…' : 'Confirm'}
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => rejectPaymentSubmission(s.id)}
-                                              disabled={billingReviewBusy !== null}
-                                              className="text-[9px] font-black uppercase text-red-500 border border-red-200 px-2 py-1 rounded-md hover:bg-red-50 transition-colors disabled:opacity-40"
-                                            >
-                                              {billingReviewBusy === `reject-${s.id}` ? 'Rejecting…' : 'Reject'}
-                                            </button>
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </div>
-                        </>
-                      )}
-
-                      {currentUserRole !== 'super_admin' && (
-                        <div className="white-card rounded-2xl p-6 space-y-4">
-                          <div className="border-b pb-3">
-                            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Subscription Status</h4>
-                            <p className="text-[10px] text-slate-400 mt-0.5">Upgrade plan by submitting proof of payment.</p>
-                          </div>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Current Plan</p>
-                              <p className="text-sm font-black text-[#003366] uppercase">{billingMe?.subscription?.plan || billingMe?.tenant?.plan || 'free'}</p>
-                            </div>
-                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Status</p>
-                              <p className="text-sm font-black text-amber-600 uppercase">{billingMe?.subscription?.status || 'free'}</p>
-                            </div>
-                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Period End</p>
-                              <p className="text-sm font-black text-slate-700">{billingMe?.subscription?.period_end ? new Date(billingMe.subscription.period_end).toLocaleDateString() : '—'}</p>
-                            </div>
-                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase">Grace Days</p>
-                              <p className="text-sm font-black text-slate-700">{billingMe?.subscription?.grace_days ?? billingMe?.billing?.graceDays ?? 5}</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="white-card rounded-2xl p-6 space-y-4">
-                        <div className="border-b pb-3">
-                          <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">SLA / KPI Snapshot</h4>
-                          <p className="text-[10px] text-slate-400 mt-0.5">Lightweight operational metrics from entry, first response, and closure.</p>
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase">First Response</p>
-                            <p className="text-sm font-black text-[#003366]">{kpiSnapshot.firstResponseAvg} min</p>
-                          </div>
-                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase">SLA Met Rate</p>
-                            <p className="text-sm font-black text-emerald-600">{kpiSnapshot.slaMetRate}%</p>
-                          </div>
-                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase">Reassignments</p>
-                            <p className="text-sm font-black text-amber-600">{kpiSnapshot.reassignments}</p>
-                          </div>
-                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase">No-Show Rate</p>
-                            <p className="text-sm font-black text-rose-600">{kpiSnapshot.noShowRate}%</p>
-                          </div>
-                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase">Top Breach Reason</p>
-                            <p className="text-sm font-black text-slate-700">{kpiSnapshot.topBreachReason}</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                    <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading overview…</div>}>
+                      <AdminOverviewPanel
+                        setupChecklist={setupChecklist}
+                        currentUserRole={currentUserRole}
+                        billingOverview={billingOverview}
+                        billingSubmissions={billingSubmissions}
+                        billingMe={billingMe}
+                        billingReviewBusy={billingReviewBusy}
+                        kpiSnapshot={kpiSnapshot}
+                        onOpenOperations={() => setAdminArea('operations')}
+                        onRefreshBillingSubmissions={() => { void loadBillingSubmissions(); }}
+                        onConfirmPaymentSubmission={confirmPaymentSubmission}
+                        onRejectPaymentSubmission={rejectPaymentSubmission}
+                      />
+                    </Suspense>
                   )}
 
                   {adminArea !== 'overview' && (
