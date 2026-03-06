@@ -42,6 +42,8 @@ const AdminOverviewPanel = lazy(() => import('./features/dashboard/AdminOverview
 const TellerPanel = lazy(() => import('./features/dashboard/TellerPanel'));
 const AdminOperationsPanel = lazy(() => import('./features/dashboard/AdminOperationsPanel'));
 const AdminReportsPanel = lazy(() => import('./features/dashboard/AdminReportsPanel'));
+const AdminSettingsPanel = lazy(() => import('./features/dashboard/AdminSettingsPanel'));
+const AdminPlatformPanel = lazy(() => import('./features/dashboard/AdminPlatformPanel'));
 
 interface AppProps {
   onGoToLanding?: () => void;
@@ -2106,461 +2108,80 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                       </Suspense>
                     )}
 
-                    {/* COMPANY PROFILE PANEL */}
                     {adminArea === 'settings' && (
-                    <div className="white-card rounded-2xl p-6 space-y-5">
-                      <div className="border-b pb-3">
-                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Company Profile</h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Set your organization identity and contact details.</p>
-                      </div>
-                      <form onSubmit={saveProfile} className="space-y-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Logo</label>
-                          <div className="flex items-center gap-3">
-                            {companyLogoUrl ? (
-                              <img src={companyLogoUrl} alt="Company logo" className="w-14 h-14 rounded-lg object-cover border border-slate-200 bg-white" />
-                            ) : (
-                              <div className="w-14 h-14 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase">
-                                No Logo
-                              </div>
-                            )}
-                            <label className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
-                              {logoUploading ? 'Uploading…' : 'Upload Logo'}
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) uploadCompanyLogo(file);
-                                  e.currentTarget.value = '';
-                                }}
-                              />
-                            </label>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Name</label>
-                          <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Acme Cooperative" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Industry</label>
-                          <input value={industry} onChange={e => setIndustry(e.target.value)} placeholder="Banking, Hospital, Government..." className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contact Email</label>
-                            <input type="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="ops@company.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contact Number</label>
-                            <input value={contactPhone} onChange={e => setContactPhone(e.target.value)} placeholder="+63 912 345 6789" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                        </div>
-                        <button type="submit" disabled={profileSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
-                          {profileSaving ? 'Saving…' : 'Save Company Profile'}
-                        </button>
-                      </form>
-                    </div>
+                      <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading settings…</div>}>
+                        <AdminSettingsPanel
+                          currentUserRole={currentUserRole}
+                          companyName={companyName}
+                          industry={industry}
+                          contactEmail={contactEmail}
+                          contactPhone={contactPhone}
+                          companyLogoUrl={companyLogoUrl}
+                          logoUploading={logoUploading}
+                          profileSaving={profileSaving}
+                          apiKey={apiKey}
+                          apiKeyInput={apiKeyInput}
+                          showApiKey={showApiKey}
+                          billingMe={billingMe}
+                          paymentPlan={paymentPlan}
+                          paymentMonths={paymentMonths}
+                          paymentReference={paymentReference}
+                          paymentNotes={paymentNotes}
+                          paymentProofDataUrl={paymentProofDataUrl}
+                          paymentSubmitting={paymentSubmitting}
+                          onSaveProfile={saveProfile}
+                          onUploadCompanyLogo={uploadCompanyLogo}
+                          onSetCompanyName={setCompanyName}
+                          onSetIndustry={setIndustry}
+                          onSetContactEmail={setContactEmail}
+                          onSetContactPhone={setContactPhone}
+                          onRemoveApiKey={removeApiKey}
+                          onSaveApiKey={saveApiKey}
+                          onSetApiKeyInput={setApiKeyInput}
+                          onSetShowApiKey={setShowApiKey}
+                          onSubmitPaymentProof={submitPaymentProof}
+                          onSetPaymentPlan={setPaymentPlan}
+                          onSetPaymentMonths={setPaymentMonths}
+                          onSetPaymentReference={setPaymentReference}
+                          onSetPaymentNotes={setPaymentNotes}
+                          onSetPaymentProofDataUrl={setPaymentProofDataUrl}
+                        />
+                      </Suspense>
                     )}
 
-
-
-                    {/* API KEY PANEL */}
-                    {adminArea === 'settings' && (
-                    <div className="white-card rounded-2xl p-6 space-y-5">
-                      <div className="border-b pb-3">
-                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Google API Key</h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Update the Google API key used by the system. The key is stored securely and never returned in full.</p>
-                      </div>
-
-                      {apiKey && (
-                        <div className="flex items-center justify-between bg-green-50 border border-green-100 rounded-xl px-4 py-3">
-                          <div>
-                            <p className="text-[10px] font-bold text-green-700 uppercase">Key Configured</p>
-                            <p className="text-xs text-green-600 font-mono mt-0.5">{apiKey}</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={removeApiKey}
-                            className="text-[9px] font-black uppercase text-red-400 border border-red-200 px-2 py-1 rounded-md hover:bg-red-50 transition-colors ml-4 shrink-0"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      )}
-
-                      <form onSubmit={saveApiKey} className="space-y-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
-                            {apiKey ? 'Replace Key' : 'API Key'}
-                          </label>
-                          <div className="flex gap-2">
-                            <input
-                              type={showApiKey ? 'text' : 'password'}
-                              value={apiKeyInput}
-                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setApiKeyInput(e.target.value)}
-                              placeholder={apiKey ? 'Paste new key to replace...' : 'AIza...'}
-                              className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none font-mono focus:ring-2 focus:ring-amber-400 transition-all"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowApiKey((v: boolean) => !v)}
-                              className="text-[10px] font-bold text-slate-500 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap"
-                            >
-                              {showApiKey ? 'Hide' : 'Show'}
-                            </button>
-                          </div>
-                        </div>
-                        <button
-                          type="submit"
-                          disabled={!apiKeyInput.trim()}
-                          className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          {apiKey ? 'Update API Key' : 'Save API Key'}
-                        </button>
-                      </form>
-                    </div>
-                    )}
-
-                    {/* TENANT BILLING PANEL */}
-                    {adminArea === 'settings' && currentUserRole !== 'super_admin' && (
-                      <div className="white-card rounded-2xl p-6 space-y-5">
-                        <div className="border-b pb-3">
-                          <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Subscription & Payment</h4>
-                          <p className="text-[10px] text-slate-400 mt-0.5">Submit your payment proof for plan activation.</p>
-                        </div>
-                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1">
-                          <p><span className="font-bold text-slate-500 uppercase text-[10px]">Bank:</span> {billingMe?.billing?.bankName || 'Not configured'}</p>
-                          <p><span className="font-bold text-slate-500 uppercase text-[10px]">Account Name:</span> {billingMe?.billing?.accountName || 'Not configured'}</p>
-                          <p><span className="font-bold text-slate-500 uppercase text-[10px]">Account Number:</span> {billingMe?.billing?.accountNumber || 'Not configured'}</p>
-                          {billingMe?.billing?.instructions && (
-                            <p><span className="font-bold text-slate-500 uppercase text-[10px]">Instructions:</span> {billingMe.billing.instructions}</p>
-                          )}
-                        </div>
-
-                        {billingMe?.billing?.qrUrl && (
-                          <div className="flex justify-center">
-                            <img src={billingMe.billing.qrUrl} alt="Payment QR code" className="w-40 h-40 rounded-xl border border-slate-200 bg-white p-2" />
-                          </div>
-                        )}
-
-                        <form onSubmit={submitPaymentProof} className="space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Plan</label>
-                              <select
-                                value={paymentPlan}
-                                onChange={e => setPaymentPlan(e.target.value as 'starter' | 'pro')}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                              >
-                                <option value="starter">Starter</option>
-                                <option value="pro">Pro</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Months</label>
-                              <select
-                                value={paymentMonths}
-                                onChange={e => setPaymentMonths(Number(e.target.value))}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                              >
-                                <option value={1}>1 Month</option>
-                                <option value={3}>3 Months</option>
-                                <option value={6}>6 Months</option>
-                                <option value={12}>12 Months</option>
-                              </select>
-                            </div>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Reference Code</label>
-                            <input
-                              value={paymentReference}
-                              onChange={e => setPaymentReference(e.target.value)}
-                              placeholder="Transfer reference number"
-                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Notes (optional)</label>
-                            <textarea
-                              rows={2}
-                              value={paymentNotes}
-                              onChange={e => setPaymentNotes(e.target.value)}
-                              placeholder="Payment details"
-                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Payment Proof</label>
-                            <label className="inline-flex text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
-                              {paymentProofDataUrl ? 'Replace Proof' : 'Upload Proof'}
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (!file) return;
-                                  const reader = new FileReader();
-                                  reader.onload = () => setPaymentProofDataUrl(String(reader.result || ''));
-                                  reader.readAsDataURL(file);
-                                  e.currentTarget.value = '';
-                                }}
-                              />
-                            </label>
-                          </div>
-                          {paymentProofDataUrl && (
-                            <img src={paymentProofDataUrl} alt="Payment proof preview" className="w-full max-h-64 object-contain bg-slate-50 border border-slate-200 rounded-xl p-2" />
-                          )}
-                          <button type="submit" disabled={paymentSubmitting} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
-                            {paymentSubmitting ? 'Submitting…' : 'Submit Payment Proof'}
-                          </button>
-                        </form>
-                      </div>
-                    )}
-
-                    {/* SUPER ADMIN BILLING SETTINGS PANEL */}
                     {adminArea === 'platform' && currentUserRole === 'super_admin' && (
-                      <div className="white-card rounded-2xl p-6 space-y-5">
-                        <div className="border-b pb-3">
-                          <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Billing Configuration</h4>
-                          <p className="text-[10px] text-slate-400 mt-0.5">Set bank details, payment QR, and grace days for auto-downgrade.</p>
-                        </div>
-                        <form onSubmit={saveBillingSettings} className="space-y-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Bank Name</label>
-                            <input value={billingSettings.bankName || ''} onChange={e => setBillingSettings((prev: any) => ({ ...prev, bankName: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Account Name</label>
-                              <input value={billingSettings.accountName || ''} onChange={e => setBillingSettings((prev: any) => ({ ...prev, accountName: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Account Number</label>
-                              <input value={billingSettings.accountNumber || ''} onChange={e => setBillingSettings((prev: any) => ({ ...prev, accountNumber: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                            </div>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Instructions</label>
-                            <textarea rows={3} value={billingSettings.instructions || ''} onChange={e => setBillingSettings((prev: any) => ({ ...prev, instructions: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Grace Days</label>
-                            <input type="number" min={1} max={30} value={billingSettings.graceDays ?? 5} onChange={e => setBillingSettings((prev: any) => ({ ...prev, graceDays: Number(e.target.value) }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Payment QR Code</label>
-                            <div className="flex items-center gap-3">
-                              {billingSettings.qrUrl ? (
-                                <img src={billingSettings.qrUrl} alt="Billing QR code" className="w-16 h-16 rounded-lg border border-slate-200 bg-white p-1" />
-                              ) : (
-                                <div className="w-16 h-16 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase">No QR</div>
-                              )}
-                              <label className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
-                                {billingQrDataUrl ? 'QR Ready' : 'Upload QR'}
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (!file) return;
-                                    const reader = new FileReader();
-                                    reader.onload = () => setBillingQrDataUrl(String(reader.result || ''));
-                                    reader.readAsDataURL(file);
-                                    e.currentTarget.value = '';
-                                  }}
-                                />
-                              </label>
-                            </div>
-                          </div>
-                          <button type="submit" disabled={billingSettingsSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
-                            {billingSettingsSaving ? 'Saving…' : 'Save Billing Configuration'}
-                          </button>
-                        </form>
-                      </div>
+                      <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading platform tools…</div>}>
+                        <AdminPlatformPanel
+                          billingSettings={billingSettings}
+                          billingQrDataUrl={billingQrDataUrl}
+                          billingSettingsSaving={billingSettingsSaving}
+                          adminUsers={adminUsers}
+                          adminTenants={adminTenants}
+                          editTenantName={editTenantName}
+                          editTenantPlan={editTenantPlan}
+                          confirmDeleteUser={confirmDeleteUser}
+                          confirmDeleteTenant={confirmDeleteTenant}
+                          onSaveBillingSettings={saveBillingSettings}
+                          onSetBillingSettings={setBillingSettings}
+                          onSetBillingQrDataUrl={setBillingQrDataUrl}
+                          onRefreshUsers={() => loadAdminUsers()}
+                          onRefreshTenants={() => loadAdminTenants()}
+                          onUpdateUserRole={updateUserRole}
+                          onDeleteUser={deleteUser}
+                          onSetConfirmDeleteUser={setConfirmDeleteUser}
+                          onSetEditTenantName={setEditTenantName}
+                          onUpdateTenantName={updateTenantName}
+                          onSetEditTenantPlan={setEditTenantPlan}
+                          onUpdateTenantPlan={updateTenantPlan}
+                          onDeleteTenant={deleteTenant}
+                          onSetConfirmDeleteTenant={setConfirmDeleteTenant}
+                        />
+                      </Suspense>
                     )}
-
                   </div>
-                  )}
-
-                  {/* ===== SUPER ADMIN PANELS ===== */}
-                  {currentUserRole === 'super_admin' && adminArea === 'platform' && (
-                    <div className="space-y-6">
-                      <div className="flex items-center gap-3 pt-2">
-                        <div className="h-px flex-1 bg-amber-200"></div>
-                        <span className="text-[10px] font-black text-amber-600 uppercase tracking-[0.3em] px-2">Super Admin</span>
-                        <div className="h-px flex-1 bg-amber-200"></div>
-                      </div>
-
-                      {/* USER MANAGEMENT PANEL */}
-                      <div className="white-card rounded-2xl p-6 space-y-5">
-                        <div className="flex justify-between items-start border-b pb-3">
-                          <div>
-                            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">User Management</h4>
-                            <p className="text-[10px] text-slate-400 mt-0.5">All registered users across all tenants. Change roles or remove accounts.</p>
-                          </div>
-                          <button type="button" onClick={() => loadAdminUsers()} className="text-[10px] font-bold text-slate-400 hover:text-[#003366] uppercase tracking-widest transition-colors">Refresh</button>
-                        </div>
-
-                        {adminUsers.length === 0 ? (
-                          <p className="text-xs text-slate-400 text-center py-4">No users found.</p>
-                        ) : (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left">
-                              <thead>
-                                <tr className="border-b border-slate-100">
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">User</th>
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Tenant</th>
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Role</th>
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Joined</th>
-                                  <th className="pb-2" scope="col"><span className="sr-only">Actions</span></th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-50">
-                                {adminUsers.map(u => (
-                                  <tr key={u.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="py-3 pr-4">
-                                      <p className="text-xs font-bold text-[#003366]">{u.name || '—'}</p>
-                                      <p className="text-[10px] text-slate-400 font-mono">{u.email}</p>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <p className="text-xs text-slate-600">{u.tenantName || u.tenant_id}</p>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <select
-                                        aria-label="User role"
-                                        value={u.role}
-                                        onChange={e => updateUserRole(u.id, e.target.value)}
-                                        className="text-[10px] font-bold bg-slate-100 border-0 rounded-lg px-2 py-1.5 outline-none cursor-pointer focus:ring-2 focus:ring-amber-400"
-                                      >
-                                        <option value="tenant_admin">Tenant Admin</option>
-                                        <option value="super_admin">Super Admin</option>
-                                      </select>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <p className="text-[10px] text-slate-400">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '—'}</p>
-                                    </td>
-                                    <td className="py-3">
-                                      {confirmDeleteUser === u.id ? (
-                                        <div className="flex items-center gap-1">
-                                          <button type="button" onClick={() => deleteUser(u.id)} className="text-[9px] font-black uppercase text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-md transition-colors">Delete</button>
-                                          <button type="button" onClick={() => setConfirmDeleteUser(null)} className="text-[9px] font-black uppercase text-slate-500 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors">Cancel</button>
-                                        </div>
-                                      ) : (
-                                        <button type="button" onClick={() => setConfirmDeleteUser(u.id)} className="text-red-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors" title="Delete user">
-                                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                          </svg>
-                                        </button>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* TENANT MANAGEMENT PANEL */}
-                      <div className="white-card rounded-2xl p-6 space-y-5">
-                        <div className="flex justify-between items-start border-b pb-3">
-                          <div>
-                            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Tenant Management</h4>
-                            <p className="text-[10px] text-slate-400 mt-0.5">All registered organizations. Edit names or remove inactive tenants.</p>
-                          </div>
-                          <button type="button" onClick={() => loadAdminTenants()} className="text-[10px] font-bold text-slate-400 hover:text-[#003366] uppercase tracking-widest transition-colors">Refresh</button>
-                        </div>
-
-                        {adminTenants.length === 0 ? (
-                          <p className="text-xs text-slate-400 text-center py-4">No tenants found.</p>
-                        ) : (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left">
-                              <thead>
-                                <tr className="border-b border-slate-100">
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Name</th>
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Slug</th>
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Plan</th>
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Users</th>
-                                  <th className="text-[10px] font-black text-slate-400 uppercase tracking-wider pb-2 pr-4">Created</th>
-                                  <th className="pb-2" scope="col"><span className="sr-only">Actions</span></th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-50">
-                                {adminTenants.map(t => (
-                                  <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="py-3 pr-4">
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          aria-label="Tenant name"
-                                          title="Edit tenant name"
-                                          value={editTenantName[t.id] ?? t.name}
-                                          onChange={e => setEditTenantName(prev => ({ ...prev, [t.id]: e.target.value }))}
-                                          className="text-xs font-bold text-[#003366] bg-transparent border-b border-transparent hover:border-slate-300 focus:border-amber-400 outline-none w-36 transition-all"
-                                        />
-                                        {editTenantName[t.id] !== t.name && (
-                                          <button type="button" onClick={() => updateTenantName(t.id)} className="text-[9px] font-black uppercase text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded transition-colors hover:bg-amber-50">Save</button>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <p className="text-[10px] text-slate-400 font-mono">{t.slug}</p>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <div className="flex items-center gap-2">
-                                        <select
-                                          aria-label="Tenant plan"
-                                          value={editTenantPlan[t.id] || (t.plan || 'free')}
-                                          onChange={e => setEditTenantPlan(prev => ({ ...prev, [t.id]: e.target.value as 'free' | 'starter' | 'pro' }))}
-                                          className="text-[10px] font-bold bg-slate-100 border-0 rounded-lg px-2 py-1.5 outline-none cursor-pointer focus:ring-2 focus:ring-amber-400"
-                                        >
-                                          <option value="free">Free</option>
-                                          <option value="starter">Starter</option>
-                                          <option value="pro">Pro</option>
-                                        </select>
-                                        {(editTenantPlan[t.id] || t.plan || 'free') !== (t.plan || 'free') && (
-                                          <button type="button" onClick={() => updateTenantPlan(t.id)} className="text-[9px] font-black uppercase text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded transition-colors hover:bg-amber-50">Save</button>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <p className="text-xs text-slate-600 font-bold">{t.userCount}</p>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <p className="text-[10px] text-slate-400">{t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}</p>
-                                    </td>
-                                    <td className="py-3">
-                                      {t.id === 'default' ? (
-                                        <span className="text-[9px] font-bold text-slate-300 uppercase">Default</span>
-                                      ) : confirmDeleteTenant === t.id ? (
-                                        <div className="flex items-center gap-1">
-                                          <button type="button" onClick={() => deleteTenant(t.id)} className="text-[9px] font-black uppercase text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-md transition-colors">Delete</button>
-                                          <button type="button" onClick={() => setConfirmDeleteTenant(null)} className="text-[9px] font-black uppercase text-slate-500 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors">Cancel</button>
-                                        </div>
-                                      ) : (
-                                        <button type="button" onClick={() => setConfirmDeleteTenant(t.id)} className="text-red-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors" title="Delete tenant">
-                                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                          </svg>
-                                        </button>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
+            )}
             </motion.section>
           )}
 
