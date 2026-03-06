@@ -54,20 +54,21 @@ const PLAN_PRICES: Record<string, number> = {
   starter: 999,
   pro: 2499,
 };
+const isDev = process.env.NODE_ENV === "development";
 
 async function startServer() {
   const app = express();
   const server = createServer(app);
   const wss = new WebSocketServer({ server });
 
-  // Trust proxy headers so req.ip works correctly behind reverse proxies
-  app.set("trust proxy", 1);
+  // Only trust proxy headers when the deployment explicitly opts in.
+  app.set("trust proxy", process.env.TRUST_PROXY === "true");
 
   const PORT = Number(process.env.PORT) || 3000;
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server is live on port ${PORT}`);
-    if (!process.env.ADMIN_PASSWORD) {
-      console.warn(`[ADMIN] Warning: Using default admin password. Set ADMIN_EMAIL and ADMIN_PASSWORD env vars for production.`);
+    if (!process.env.ADMIN_PASSWORD && isDev) {
+      console.warn(`[ADMIN] Warning: Using development fallback admin password. Set ADMIN_EMAIL and ADMIN_PASSWORD in your env.`);
     }
   });
 
@@ -239,8 +240,11 @@ async function startServer() {
   // Seed default super_admin user if none exist
   const userCount = (db.prepare('SELECT COUNT(1) as c FROM users').get() as any).c as number;
   if (userCount === 0) {
-    const email = process.env.ADMIN_EMAIL || 'admin@ssb.local';
-    const rawPassword = process.env.ADMIN_PASSWORD || 'SSBAdmin2025!';
+    const email = process.env.ADMIN_EMAIL?.trim() || 'admin@ssb.local';
+    const rawPassword = process.env.ADMIN_PASSWORD?.trim() || (isDev ? 'dev-admin-change-me' : '');
+    if (!rawPassword) {
+      throw new Error("ADMIN_PASSWORD env var is required to seed the initial super admin outside development.");
+    }
     const hash = await bcrypt.hash(rawPassword, 12);
     db.prepare(
       'INSERT INTO users (id, email, password_hash, role, tenant_id, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
@@ -250,7 +254,7 @@ async function startServer() {
 
   // Clean expired sessions on startup and hourly thereafter
   const cleanSessions = () => {
-    db.prepare("DELETE FROM admin_sessions WHERE createdAt < datetime('now', '-24 hours')").run();
+    db.prepare("DELETE FROM admin_sessions WHERE datetime(createdAt) < datetime('now', '-24 hours')").run();
   };
   cleanSessions();
   setInterval(cleanSessions, 60 * 60 * 1000);
@@ -263,11 +267,19 @@ async function startServer() {
   };
 
   const getClientIP = (req: express.Request): string => {
-    const forwarded = req.headers["x-forwarded-for"];
-    const raw = forwarded
-      ? (typeof forwarded === "string" ? forwarded : forwarded[0]).split(",")[0].trim()
-      : req.socket.remoteAddress || "";
-    return normalizeIP(raw);
+    return normalizeIP(req.ip || req.socket.remoteAddress || "");
+  };
+
+  const getActiveSession = (token: string | undefined) => {
+    if (!token) return null;
+    const session = db.prepare(
+      "SELECT token, user_id, createdAt FROM admin_sessions WHERE token = ? AND datetime(createdAt) >= datetime('now', '-24 hours')"
+    ).get(token) as { token: string; user_id: string | null; createdAt: string } | undefined;
+    if (!session) {
+      db.prepare("DELETE FROM admin_sessions WHERE token = ?").run(token);
+      return null;
+    }
+    return session;
   };
 
   const requireAdmin = (
@@ -277,7 +289,7 @@ async function startServer() {
   ) => {
     const token = req.headers["x-admin-token"] as string;
     if (!token) return res.status(401).json({ error: "Unauthorized" });
-    const session = db.prepare("SELECT token FROM admin_sessions WHERE token = ?").get(token);
+    const session = getActiveSession(token);
     if (!session) return res.status(401).json({ error: "Invalid or expired session" });
     next();
   };
@@ -289,7 +301,7 @@ async function startServer() {
   ) => {
     const token = req.headers["x-admin-token"] as string;
     if (!token) return res.status(401).json({ error: "Unauthorized" });
-    const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
+    const session = getActiveSession(token);
     if (!session) return res.status(401).json({ error: "Invalid or expired session" });
     const user = db.prepare("SELECT role FROM users WHERE id = ?").get(session.user_id) as any;
     if (!user || user.role !== 'super_admin') return res.status(403).json({ error: "Super admin access required" });
@@ -297,7 +309,7 @@ async function startServer() {
   };
 
   const getUserFromToken = (token: string) => {
-    const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
+    const session = getActiveSession(token);
     if (!session?.user_id) return null;
     return db.prepare("SELECT * FROM users WHERE id = ?").get(session.user_id) as any;
   };
@@ -528,10 +540,7 @@ async function startServer() {
   });
 
   app.get("/api/auth/me", requireAdmin, (req, res) => {
-    const token = req.headers["x-admin-token"] as string;
-    const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
-    if (!session?.user_id) return res.status(401).json({ error: "Invalid or expired session" });
-    const user = db.prepare("SELECT id, email, role, tenant_id FROM users WHERE id = ?").get(session.user_id) as any;
+    const user = getUserFromToken(req.headers["x-admin-token"] as string);
     if (!user) return res.status(401).json({ error: "Invalid or expired session" });
     res.json(user);
   });
@@ -660,7 +669,7 @@ async function startServer() {
   });
 
   app.delete("/api/admin/ips/:ip", requireAdmin, (req, res) => {
-    db.prepare("DELETE FROM ip_whitelist WHERE ip = ?").run(req.params.ip);
+    db.prepare("DELETE FROM ip_whitelist WHERE ip = ?").run(normalizeIP(req.params.ip));
     res.json({ status: "ok" });
   });
 
@@ -1806,7 +1815,6 @@ async function startServer() {
   });
 
   // ===== VITE / STATIC =====
-  const isDev = process.env.NODE_ENV === "development";
   console.log(`[STARTUP] isDev: ${isDev}`);
 
   if (isDev) {
