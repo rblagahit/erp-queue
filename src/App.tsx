@@ -13,12 +13,32 @@ interface QueueEntry {
   branch: string;
   service: string;
   priority: string;
+  sourceChannel?: string | null;
+  slaTargetMinutes?: number | null;
   checkInTime: string;
-  status: 'Waiting' | 'Processing' | 'Completed';
+  status: 'Waiting' | 'Processing' | 'Completed' | 'No Show';
+  firstCalledTime?: string | null;
   calledTime: string | null;
   completedTime: string | null;
+  reassignCount?: number | null;
+  handledByUserId?: string | null;
+  handledByEmail?: string | null;
+  outcome?: string | null;
+  breachReason?: string | null;
+  noShowReason?: string | null;
   notes?: string | null;
 }
+
+type QueueApiEntry = QueueEntry & {
+  source_channel?: string | null;
+  sla_target_minutes?: number | null;
+  first_called_time?: string | null;
+  reassign_count?: number | null;
+  handled_by_user_id?: string | null;
+  handled_by_email?: string | null;
+  breach_reason?: string | null;
+  no_show_reason?: string | null;
+};
 
 interface IPEntry {
   ip: string;
@@ -43,6 +63,21 @@ const CUSTOMER_TERMS: Record<string, { singular: string; plural: string; title: 
   citizen: { singular: "citizen", plural: "citizens", title: "Citizen" },
 };
 const SLA_THRESHOLD_MINUTES = 10;
+const BREACH_REASON_OPTIONS = [
+  'High volume',
+  'Complex case',
+  'Customer unavailable',
+  'System issue',
+  'Staff shortage',
+  'Manual verification',
+];
+const NO_SHOW_REASON_OPTIONS = [
+  'Customer unavailable',
+  'Left the premises',
+  'Called multiple times',
+  'Incomplete requirements',
+  'Requested cancellation',
+];
 
 interface AppProps {
   onGoToLanding?: () => void;
@@ -119,12 +154,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [confirmRemoveIP, setConfirmRemoveIP] = useState<string | null>(null);
   const [completionNotes, setCompletionNotes] = useState<Record<string, string>>({});
+  const [completionBreachReasons, setCompletionBreachReasons] = useState<Record<string, string>>({});
+  const [noShowReasons, setNoShowReasons] = useState<Record<string, string>>({});
   const [reassignBranch, setReassignBranch] = useState<Record<string, string>>({});
   const [reassignService, setReassignService] = useState<Record<string, string>>({});
   const [catalogBranchesText, setCatalogBranchesText] = useState('');
   const [catalogServicesText, setCatalogServicesText] = useState('');
   const [catalogSaving, setCatalogSaving] = useState(false);
-  const [adminArea, setAdminArea] = useState<'dashboard' | 'settings' | 'management'>('dashboard');
+  const [adminArea, setAdminArea] = useState<'overview' | 'operations' | 'reports' | 'settings' | 'platform'>('overview');
   const [companyName, setCompanyName] = useState('');
   const [industry, setIndustry] = useState('');
   const [contactEmail, setContactEmail] = useState('');
@@ -167,6 +204,25 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     return `SQ-${raw.slice(0, 8).toUpperCase()}`;
   };
 
+  const getEntrySourceChannel = () => {
+    const params = new URLSearchParams(window.location.search);
+    if (adminToken) return 'staff_assisted';
+    if (params.get('kiosk') === '1') return 'qr_kiosk';
+    return 'self_service';
+  };
+
+  const normalizeQueueEntry = (entry: QueueApiEntry): QueueEntry => ({
+    ...entry,
+    sourceChannel: entry.sourceChannel ?? entry.source_channel ?? 'self_service',
+    slaTargetMinutes: entry.slaTargetMinutes ?? entry.sla_target_minutes ?? SLA_THRESHOLD_MINUTES,
+    firstCalledTime: entry.firstCalledTime ?? entry.first_called_time ?? null,
+    reassignCount: entry.reassignCount ?? entry.reassign_count ?? 0,
+    handledByUserId: entry.handledByUserId ?? entry.handled_by_user_id ?? null,
+    handledByEmail: entry.handledByEmail ?? entry.handled_by_email ?? null,
+    breachReason: entry.breachReason ?? entry.breach_reason ?? null,
+    noShowReason: entry.noShowReason ?? entry.no_show_reason ?? null,
+  });
+
   const fetchData = async () => {
     const token = localStorage.getItem('adminToken');
     const headers: HeadersInit = token ? { 'x-admin-token': token } : {};
@@ -175,9 +231,15 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         fetch('/api/queue', { headers }),
         fetch('/api/history', { headers })
       ]);
-      if (qRes.ok) setQueue(await qRes.json());
+      if (qRes.ok) {
+        const data = await qRes.json();
+        setQueue(Array.isArray(data) ? data.map(normalizeQueueEntry) : []);
+      }
       else if (qRes.status === 401) setQueue([]);
-      if (hRes.ok) setHistory(await hRes.json());
+      if (hRes.ok) {
+        const data = await hRes.json();
+        setHistory(Array.isArray(data) ? data.map(normalizeQueueEntry) : []);
+      }
       else if (hRes.status === 401) setHistory([]);
     } catch (err) {
       console.error("Failed to fetch data", err);
@@ -234,7 +296,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
             setAdminToken(stored);
             loadCatalog(stored);
             const me = await fetch('/api/auth/me', { headers: { 'x-admin-token': stored } });
-            if (me.ok) { const u = await me.json(); setCurrentUserRole(u.role); }
+            if (me.ok) {
+              const u = await me.json();
+              setCurrentUserRole(u.role);
+            }
           } else {
             localStorage.removeItem('adminToken');
           }
@@ -886,7 +951,11 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
           loadCatalog(token);
           loadAdminCatalog(token);
           fetch('/api/auth/me', { headers: { 'x-admin-token': token } })
-            .then(r => r.json()).then(u => setCurrentUserRole(u.role)).catch(() => {});
+            .then(r => r.json())
+            .then(u => {
+              setCurrentUserRole(u.role);
+            })
+            .catch(() => {});
       } else {
         const err = await res.json().catch(() => ({}));
         setAdminLoginError(err.error || 'Invalid email or password. Please try again.');
@@ -1046,7 +1115,8 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         return;
       }
 
-      const data: QueueEntry[] = await res.json();
+      const payload = await res.json();
+      const data: QueueEntry[] = Array.isArray(payload) ? payload.map(normalizeQueueEntry) : [];
       if (data.length === 0) {
         showNotification('No records found for the selected filters.', true);
         return;
@@ -1067,6 +1137,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
       const headers = [
         "Ticket ID", `${termCopy.title} Name`, "Branch", "Service", "Priority",
+        "Entry Source", "SLA Target (m)", "First Response", "Reassignments", "Handled By", "Outcome", "Breach Reason", "No Show Reason",
         "Check-In", "Called At", "Completed At", "Wait Time (m)", "Service Time (m)"
       ];
       const rows = data.map(h => {
@@ -1075,6 +1146,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         const svc = h.completedTime && h.calledTime
           ? Math.round((new Date(h.completedTime).getTime() - new Date(h.calledTime).getTime()) / 60000) : 0;
         return [h.id, h.name, h.branch, h.service, h.priority,
+          h.sourceChannel || 'self_service', h.slaTargetMinutes || SLA_THRESHOLD_MINUTES, h.firstCalledTime || '', h.reassignCount || 0, h.handledByEmail || '', h.outcome || h.status, h.breachReason || '', h.noShowReason || '',
           h.checkInTime, h.calledTime || '', h.completedTime || '', wait, svc];
       });
 
@@ -1123,10 +1195,16 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       branch: clientBranch,
       service: clientService,
       priority: clientPriority,
+      sourceChannel: getEntrySourceChannel(),
+      slaTargetMinutes: SLA_THRESHOLD_MINUTES,
       checkInTime: new Date().toISOString(),
       status: 'Waiting',
+      firstCalledTime: null,
       calledTime: null,
-      completedTime: null
+      completedTime: null,
+      reassignCount: 0,
+      outcome: null,
+      breachReason: null,
     };
 
     try {
@@ -1173,19 +1251,32 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     }
   };
 
-  const completeTransaction = async (id: string, notes: string) => {
+  const completeTransaction = async (id: string, notes: string, breachReason: string) => {
     if (!adminToken) {
       showNotification('Sign in required for teller actions.', true);
       return;
+    }
+    const ticket = queue.find((item) => item.id === id);
+    if (ticket) {
+      const firstResponseTime = ticket.firstCalledTime || ticket.calledTime;
+      const slaTarget = ticket.slaTargetMinutes || SLA_THRESHOLD_MINUTES;
+      if (firstResponseTime && ticket.checkInTime) {
+        const responseMinutes = (new Date(firstResponseTime).getTime() - new Date(ticket.checkInTime).getTime()) / 60000;
+        if (responseMinutes > slaTarget && !breachReason.trim()) {
+          showNotification('Select a breach reason before completing an SLA-breached ticket.', true);
+          return;
+        }
+      }
     }
     try {
       const res = await fetch('/api/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
-        body: JSON.stringify({ id, completedTime: new Date().toISOString(), notes })
+        body: JSON.stringify({ id, completedTime: new Date().toISOString(), notes, breachReason })
       });
       if (res.ok) {
         setCompletionNotes(prev => ({ ...prev, [id]: '' }));
+        setCompletionBreachReasons(prev => ({ ...prev, [id]: '' }));
         await fetchData();
       }
       else showNotification('Failed to complete transaction. Please try again.', true);
@@ -1199,13 +1290,21 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       showNotification('Sign in required for teller actions.', true);
       return;
     }
+    const noShowReason = noShowReasons[id] || '';
+    if (!noShowReason.trim()) {
+      showNotification('Select a no-show reason before closing the ticket.', true);
+      return;
+    }
     try {
       const res = await fetch('/api/noshow', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
-        body: JSON.stringify({ id })
+        body: JSON.stringify({ id, noShowReason })
       });
-      if (res.ok) await fetchData();
+      if (res.ok) {
+        setNoShowReasons(prev => ({ ...prev, [id]: '' }));
+        await fetchData();
+      }
       else showNotification('Failed to mark no-show. Please try again.', true);
     } catch {
       showNotification('Failed to mark no-show. Check connection.', true);
@@ -1227,6 +1326,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         body: JSON.stringify({ id, branch: newBranch, service: newService })
       });
       if (res.ok) {
+        setNoShowReasons(prev => ({ ...prev, [id]: '' }));
         await fetchData();
         showNotification(`Ticket ${id} reassigned to ${newBranch} / ${newService} and moved to Priority queue.`);
       } else {
@@ -1351,12 +1451,56 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     return { waiting, processing, today };
   }, [queue, history]);
 
+  const kpiSnapshot = useMemo(() => {
+    const completedHistory = history.filter(h => h.outcome === 'completed' || h.status === 'Completed');
+    const closedHistory = history.filter(h =>
+      h.outcome === 'completed' || h.outcome === 'no_show' || h.status === 'Completed' || h.status === 'No Show'
+    );
+    const noShowCount = history.filter(h => h.outcome === 'no_show' || h.status === 'No Show').length;
+    let firstResponseTotal = 0;
+    let firstResponseCount = 0;
+    let slaMetCount = 0;
+    let reassignments = 0;
+    const breachReasons = new Map<string, number>();
+
+    completedHistory.forEach((item) => {
+      const firstResponse = item.firstCalledTime || item.calledTime;
+      const slaTarget = item.slaTargetMinutes || SLA_THRESHOLD_MINUTES;
+      if (firstResponse && item.checkInTime) {
+        const responseMinutes = (new Date(firstResponse).getTime() - new Date(item.checkInTime).getTime()) / 60000;
+        if (!Number.isNaN(responseMinutes) && responseMinutes >= 0) {
+          firstResponseTotal += responseMinutes;
+          firstResponseCount += 1;
+          if (responseMinutes <= slaTarget) slaMetCount += 1;
+        }
+      }
+      reassignments += item.reassignCount || 0;
+      if (item.breachReason) {
+        breachReasons.set(item.breachReason, (breachReasons.get(item.breachReason) || 0) + 1);
+      }
+    });
+
+    const topBreachReason = [...breachReasons.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'None';
+
+    return {
+      firstResponseAvg: firstResponseCount ? Math.round(firstResponseTotal / firstResponseCount) : 0,
+      slaMetRate: firstResponseCount ? Math.round((slaMetCount / firstResponseCount) * 100) : 0,
+      noShowRate: closedHistory.length ? Math.round((noShowCount / closedHistory.length) * 100) : 0,
+      reassignments,
+      topBreachReason,
+    };
+  }, [history]);
+
   const setupChecklist = useMemo(() => {
     const profileDone = !!companyName.trim() && !!industry.trim() && !!contactEmail.trim() && !!contactPhone.trim();
     const operationsDone = branches.length > 0 && services.length > 0;
     const configDone = ipList.length > 0 && !!smtpHost.trim() && !!smtpTo.trim();
     return { profileDone, operationsDone, configDone };
   }, [companyName, industry, contactEmail, contactPhone, branches, services, ipList, smtpHost, smtpTo]);
+
+  const setupCompletionCount = useMemo(() => {
+    return [setupChecklist.profileDone, setupChecklist.operationsDone, setupChecklist.configDone].filter(Boolean).length;
+  }, [setupChecklist]);
 
   const formatDuration = (ms: number) => {
     const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -1577,11 +1721,16 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     {filteredQueue.map(item => {
                       const waitTimeMs = currentTime.getTime() - new Date(item.checkInTime).getTime();
                       const processingTimeMs = item.calledTime ? currentTime.getTime() - new Date(item.calledTime).getTime() : 0;
+                      const firstResponseTime = item.firstCalledTime || item.calledTime;
+                      const firstResponseBreached = firstResponseTime
+                        ? ((new Date(firstResponseTime).getTime() - new Date(item.checkInTime).getTime()) / 60000) > (item.slaTargetMinutes || SLA_THRESHOLD_MINUTES)
+                        : false;
                       return (
                         <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-6 py-5">
                             <p className="text-[10px] font-extrabold text-[#003366] uppercase">{item.branch}</p>
                             <p className="text-[9px] text-slate-400 mt-1">ID: {item.id}</p>
+                            <p className="text-[9px] text-slate-400 mt-1 uppercase">Source: {item.sourceChannel || 'self_service'}</p>
                           </td>
                           <td className="px-6 py-5">
                             <div className="flex items-center gap-2">
@@ -1612,6 +1761,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                                   </>
                                 )}
                               </div>
+                              <div className="flex items-center gap-2 text-[8px] uppercase font-bold text-slate-400">
+                                <span>SLA {item.slaTargetMinutes || SLA_THRESHOLD_MINUTES}m</span>
+                                <span>·</span>
+                                <span>{item.reassignCount || 0} reassign</span>
+                              </div>
+                              <p className="text-[8px] uppercase font-bold text-slate-300">
+                                Owner: {item.handledByEmail || 'Unassigned'}
+                              </p>
                               <span className={cn(
                                 "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-tighter",
                                 item.status === 'Processing' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'
@@ -1634,7 +1791,29 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                                   rows={2}
                                   className="w-56 text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none"
                                 />
-                                <button type="button" onClick={() => completeTransaction(item.id, completionNotes[item.id] || '')} className="text-[10px] font-bold uppercase bg-[#003366] text-white px-4 py-2 rounded-lg hover:shadow-lg transition-all shadow-md flex items-center gap-2">
+                                {firstResponseBreached && (
+                                  <select
+                                    value={completionBreachReasons[item.id] || ''}
+                                    onChange={(e) => setCompletionBreachReasons(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                    className="w-56 text-[10px] bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 outline-none text-amber-700"
+                                  >
+                                    <option value="">Select breach reason</option>
+                                    {BREACH_REASON_OPTIONS.map((reason) => (
+                                      <option key={reason} value={reason}>{reason}</option>
+                                    ))}
+                                  </select>
+                                )}
+                                <select
+                                  value={noShowReasons[item.id] || ''}
+                                  onChange={(e) => setNoShowReasons(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                  className="w-56 text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none text-slate-600"
+                                >
+                                  <option value="">Select no-show reason</option>
+                                  {NO_SHOW_REASON_OPTIONS.map((reason) => (
+                                    <option key={reason} value={reason}>{reason}</option>
+                                  ))}
+                                </select>
+                                <button type="button" onClick={() => completeTransaction(item.id, completionNotes[item.id] || '', completionBreachReasons[item.id] || '')} className="text-[10px] font-bold uppercase bg-[#003366] text-white px-4 py-2 rounded-lg hover:shadow-lg transition-all shadow-md flex items-center gap-2">
                                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
                                   Finish
                                 </button>
@@ -1787,6 +1966,8 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           <th className="pb-3 font-semibold">Branch</th>
                           <th className="pb-3 font-semibold">Wait Time</th>
                           <th className="pb-3 font-semibold">Service Duration</th>
+                          <th className="pb-3 font-semibold">Outcome</th>
+                          <th className="pb-3 font-semibold">Handled By</th>
                           <th className="pb-3 font-semibold text-right">Handled At</th>
                         </tr>
                       </thead>
@@ -1803,6 +1984,8 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                                 <td className="py-3">{h.branch}</td>
                                 <td className="py-3">{wait}m</td>
                                 <td className="py-3 font-bold text-[#003366]">{dur}m</td>
+                                <td className="py-3 uppercase text-[10px] font-bold text-slate-500">{h.outcome || h.status}</td>
+                                <td className="py-3 text-[10px] text-slate-500">{h.handledByEmail || '—'}</td>
                                 <td className="py-3 text-right text-[10px] text-slate-400">
                                   {h.completedTime ? new Date(h.completedTime).toLocaleTimeString() : ''}
                                 </td>
@@ -1992,9 +2175,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                 <div className="space-y-6">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                     <div>
-                      <h2 className="text-2xl font-extrabold text-[#003366]">Admin Panel</h2>
+                      <h2 className="text-2xl font-extrabold text-[#003366]">Admin Control Center</h2>
                       <p className="text-xs text-slate-400 font-medium">
-                        IP Whitelist · Catalog · Language · Reports · SMTP · API Settings
+                        Overview · Operations · Reports · Settings
                         {currentUserRole === 'super_admin' && <span className="ml-2 text-amber-500 font-black">· Super Admin</span>}
                       </p>
                     </div>
@@ -2010,7 +2193,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 xl:grid-cols-6 gap-4">
                     <div className="white-card rounded-2xl p-4">
                       <p className="text-[10px] font-bold text-slate-400 uppercase">Waiting</p>
                       <p className="text-2xl font-black text-[#003366]">{adminSummary.waiting}</p>
@@ -2027,17 +2210,90 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                       <p className="text-[10px] font-bold text-slate-400 uppercase">Avg Wait</p>
                       <p className="text-2xl font-black text-amber-600">{analytics.awt}m</p>
                     </div>
+                    <div className="white-card rounded-2xl p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">Avg Service</p>
+                      <p className="text-2xl font-black text-violet-600">{analytics.tat}m</p>
+                    </div>
+                    <div className="white-card rounded-2xl p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">SLA Risk</p>
+                      <p className="text-2xl font-black text-red-600">{slaAlerts.length}</p>
+                    </div>
+                    <div className="white-card rounded-2xl p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">SLA Met</p>
+                      <p className="text-2xl font-black text-emerald-600">{kpiSnapshot.slaMetRate}%</p>
+                    </div>
+                    <div className="white-card rounded-2xl p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">1st Response</p>
+                      <p className="text-2xl font-black text-cyan-600">{kpiSnapshot.firstResponseAvg}m</p>
+                    </div>
                   </div>
 
-                  <div className="white-card rounded-2xl p-3 flex items-center gap-2">
-                    <button type="button" onClick={() => setAdminArea('dashboard')} className={cn("px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest", adminArea === 'dashboard' ? "bg-[#003366] text-white" : "text-slate-500 hover:bg-slate-50")}>Dashboard</button>
-                    <button type="button" onClick={() => setAdminArea('settings')} className={cn("px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest", adminArea === 'settings' ? "bg-[#003366] text-white" : "text-slate-500 hover:bg-slate-50")}>Settings</button>
-                    {currentUserRole === 'super_admin' && (
-                      <button type="button" onClick={() => setAdminArea('management')} className={cn("px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest", adminArea === 'management' ? "bg-[#003366] text-white" : "text-slate-500 hover:bg-slate-50")}>Management</button>
-                    )}
+                  <div className="white-card rounded-2xl p-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                    {[
+                      {
+                        key: 'overview',
+                        label: 'Overview',
+                        desc: currentUserRole === 'super_admin' ? 'Health, setup, billing pulse' : 'Health, setup, subscription pulse',
+                        badge: `${setupCompletionCount}/3 set`,
+                      },
+                      {
+                        key: 'operations',
+                        label: 'Operations',
+                        desc: 'Branches, services, kiosk, IP controls',
+                        badge: `${branches.length} branches`,
+                      },
+                      {
+                        key: 'reports',
+                        label: 'Reports',
+                        desc: 'Exports, SMTP, scheduled reporting',
+                        badge: smtpHost.trim() ? 'SMTP ready' : 'SMTP pending',
+                      },
+                      {
+                        key: 'settings',
+                        label: 'Settings',
+                        desc: 'Brand, identity, account-level tools',
+                        badge: companyName.trim() ? 'Profile set' : 'Profile pending',
+                      },
+                      ...(currentUserRole === 'super_admin'
+                        ? [{
+                            key: 'platform',
+                            label: 'Platform',
+                            desc: 'Billing config, users, tenants',
+                            badge: `${billingSubmissions.length} pending`,
+                          }]
+                        : []),
+                    ].map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => setAdminArea(item.key as 'overview' | 'operations' | 'reports' | 'settings' | 'platform')}
+                        className={cn(
+                          "rounded-2xl border px-4 py-4 text-left transition-all",
+                          adminArea === item.key
+                            ? "border-[#003366] bg-[#003366] text-white shadow-lg shadow-blue-900/15"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-amber-300 hover:bg-amber-50/40"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-black uppercase tracking-[0.2em]">{item.label}</p>
+                          <span className={cn(
+                            "rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-widest",
+                            adminArea === item.key ? "bg-white/15 text-white" : "bg-slate-100 text-slate-500"
+                          )}>
+                            {item.badge}
+                          </span>
+                        </div>
+                        <p className={cn(
+                          "mt-2 text-[11px] leading-relaxed",
+                          adminArea === item.key ? "text-white/75" : "text-slate-400"
+                        )}>
+                          {item.desc}
+                        </p>
+                      </button>
+                    ))}
                   </div>
 
-                  {adminArea === 'dashboard' && (
+                  {adminArea === 'overview' && (
                     <div className="space-y-6">
                       <div className="white-card rounded-2xl p-6 space-y-4">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Quick Setup Walkthrough</h4>
@@ -2064,8 +2320,8 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                             <span className={cn("text-[10px] font-black uppercase px-2 py-1 rounded-full", setupChecklist.configDone ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{setupChecklist.configDone ? 'Done' : 'Pending'}</span>
                           </div>
                         </div>
-                        <button type="button" onClick={() => setAdminArea('settings')} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest">
-                          Open Settings
+                        <button type="button" onClick={() => setAdminArea('operations')} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest">
+                          Open Operations
                         </button>
                       </div>
 
@@ -2199,13 +2455,43 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           </div>
                         </div>
                       )}
+
+                      <div className="white-card rounded-2xl p-6 space-y-4">
+                        <div className="border-b pb-3">
+                          <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">SLA / KPI Snapshot</h4>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Lightweight operational metrics from entry, first response, and closure.</p>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">First Response</p>
+                            <p className="text-sm font-black text-[#003366]">{kpiSnapshot.firstResponseAvg} min</p>
+                          </div>
+                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">SLA Met Rate</p>
+                            <p className="text-sm font-black text-emerald-600">{kpiSnapshot.slaMetRate}%</p>
+                          </div>
+                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">Reassignments</p>
+                            <p className="text-sm font-black text-amber-600">{kpiSnapshot.reassignments}</p>
+                          </div>
+                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">No-Show Rate</p>
+                            <p className="text-sm font-black text-rose-600">{kpiSnapshot.noShowRate}%</p>
+                          </div>
+                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">Top Breach Reason</p>
+                            <p className="text-sm font-black text-slate-700">{kpiSnapshot.topBreachReason}</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
-                  {adminArea === 'settings' && (
+                  {adminArea !== 'overview' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                     {/* COMPANY PROFILE PANEL */}
+                    {adminArea === 'settings' && (
                     <div className="white-card rounded-2xl p-6 space-y-5">
                       <div className="border-b pb-3">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Company Profile</h4>
@@ -2261,8 +2547,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         </button>
                       </form>
                     </div>
+                    )}
 
                     {/* IP WHITELIST PANEL */}
+                    {adminArea === 'operations' && (
                     <div className="white-card rounded-2xl p-6 space-y-5">
                       <div className="border-b pb-3">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">IP Whitelist</h4>
@@ -2350,8 +2638,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         </button>
                       </form>
                     </div>
+                    )}
 
                     {/* CSV EXPORT PANEL */}
+                    {adminArea === 'reports' && (
                     <div className="white-card rounded-2xl p-6 space-y-5">
                       <div className="border-b pb-3">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Export Report</h4>
@@ -2444,8 +2734,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         )}
                       </div>
                     </div>
+                    )}
 
-                    {/* SMTP SETTINGS PANEL */}
+                    {/* OPERATIONS CATALOG PANEL */}
+                    {adminArea === 'operations' && (
                     <div className="white-card rounded-2xl p-6 space-y-5">
                       <div className="border-b pb-3">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Branch / Service Catalog</h4>
@@ -2501,8 +2793,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         </button>
                       </form>
                     </div>
+                    )}
 
                     {/* QR KIOSK PANEL */}
+                    {adminArea === 'operations' && (
                     <div className="white-card rounded-2xl p-6 space-y-5">
                       <div className="border-b pb-3">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Kiosk QR Check-in</h4>
@@ -2555,8 +2849,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         </button>
                       </div>
                     </div>
+                    )}
 
-                    {/* SMTP SETTINGS PANEL */}
+                    {/* REPORTS SMTP PANEL */}
+                    {adminArea === 'reports' && (
                     <div className="white-card rounded-2xl p-6 space-y-5">
                       <div className="border-b pb-3">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Email / SMTP Settings</h4>
@@ -2626,8 +2922,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         </button>
                       </div>
                     </div>
+                    )}
 
                     {/* API KEY PANEL */}
+                    {adminArea === 'settings' && (
                     <div className="white-card rounded-2xl p-6 space-y-5">
                       <div className="border-b pb-3">
                         <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Google API Key</h4>
@@ -2681,9 +2979,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         </button>
                       </form>
                     </div>
+                    )}
 
                     {/* TENANT BILLING PANEL */}
-                    {currentUserRole !== 'super_admin' && (
+                    {adminArea === 'settings' && currentUserRole !== 'super_admin' && (
                       <div className="white-card rounded-2xl p-6 space-y-5">
                         <div className="border-b pb-3">
                           <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Subscription & Payment</h4>
@@ -2780,7 +3079,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     )}
 
                     {/* SUPER ADMIN BILLING SETTINGS PANEL */}
-                    {currentUserRole === 'super_admin' && (
+                    {adminArea === 'platform' && currentUserRole === 'super_admin' && (
                       <div className="white-card rounded-2xl p-6 space-y-5">
                         <div className="border-b pb-3">
                           <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Billing Configuration</h4>
@@ -2846,7 +3145,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                   )}
 
                   {/* ===== SUPER ADMIN PANELS ===== */}
-                  {currentUserRole === 'super_admin' && adminArea === 'management' && (
+                  {currentUserRole === 'super_admin' && adminArea === 'platform' && (
                     <div className="space-y-6">
                       <div className="flex items-center gap-3 pt-2">
                         <div className="h-px flex-1 bg-amber-200"></div>

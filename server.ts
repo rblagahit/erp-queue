@@ -86,10 +86,19 @@ async function startServer() {
       branch TEXT,
       service TEXT,
       priority TEXT,
+      source_channel TEXT,
+      sla_target_minutes INTEGER DEFAULT 10,
       checkInTime TEXT,
       status TEXT,
+      first_called_time TEXT,
       calledTime TEXT,
       completedTime TEXT,
+      reassign_count INTEGER DEFAULT 0,
+      handled_by_user_id TEXT,
+      handled_by_email TEXT,
+      outcome TEXT,
+      breach_reason TEXT,
+      no_show_reason TEXT,
       notes TEXT
     );
 
@@ -100,10 +109,19 @@ async function startServer() {
       branch TEXT,
       service TEXT,
       priority TEXT,
+      source_channel TEXT,
+      sla_target_minutes INTEGER DEFAULT 10,
       checkInTime TEXT,
       status TEXT,
+      first_called_time TEXT,
       calledTime TEXT,
       completedTime TEXT,
+      reassign_count INTEGER DEFAULT 0,
+      handled_by_user_id TEXT,
+      handled_by_email TEXT,
+      outcome TEXT,
+      breach_reason TEXT,
+      no_show_reason TEXT,
       notes TEXT
     );
 
@@ -216,6 +234,60 @@ async function startServer() {
   }
   if (!hasColumn('history', 'notes')) {
     db.prepare(`ALTER TABLE history ADD COLUMN notes TEXT`).run();
+  }
+  if (!hasColumn('queue', 'source_channel')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN source_channel TEXT`).run();
+  }
+  if (!hasColumn('history', 'source_channel')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN source_channel TEXT`).run();
+  }
+  if (!hasColumn('queue', 'sla_target_minutes')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN sla_target_minutes INTEGER DEFAULT 10`).run();
+  }
+  if (!hasColumn('history', 'sla_target_minutes')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN sla_target_minutes INTEGER DEFAULT 10`).run();
+  }
+  if (!hasColumn('queue', 'first_called_time')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN first_called_time TEXT`).run();
+  }
+  if (!hasColumn('history', 'first_called_time')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN first_called_time TEXT`).run();
+  }
+  if (!hasColumn('queue', 'reassign_count')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN reassign_count INTEGER DEFAULT 0`).run();
+  }
+  if (!hasColumn('history', 'reassign_count')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN reassign_count INTEGER DEFAULT 0`).run();
+  }
+  if (!hasColumn('queue', 'handled_by_user_id')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN handled_by_user_id TEXT`).run();
+  }
+  if (!hasColumn('history', 'handled_by_user_id')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN handled_by_user_id TEXT`).run();
+  }
+  if (!hasColumn('queue', 'handled_by_email')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN handled_by_email TEXT`).run();
+  }
+  if (!hasColumn('history', 'handled_by_email')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN handled_by_email TEXT`).run();
+  }
+  if (!hasColumn('queue', 'outcome')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN outcome TEXT`).run();
+  }
+  if (!hasColumn('history', 'outcome')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN outcome TEXT`).run();
+  }
+  if (!hasColumn('queue', 'breach_reason')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN breach_reason TEXT`).run();
+  }
+  if (!hasColumn('history', 'breach_reason')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN breach_reason TEXT`).run();
+  }
+  if (!hasColumn('queue', 'no_show_reason')) {
+    db.prepare(`ALTER TABLE queue ADD COLUMN no_show_reason TEXT`).run();
+  }
+  if (!hasColumn('history', 'no_show_reason')) {
+    db.prepare(`ALTER TABLE history ADD COLUMN no_show_reason TEXT`).run();
   }
   if (!hasColumn('admin_sessions', 'user_id')) {
     db.prepare(`ALTER TABLE admin_sessions ADD COLUMN user_id TEXT`).run();
@@ -344,6 +416,30 @@ async function startServer() {
   const getPlanPrice = (planRaw?: string) => {
     const plan = (planRaw || "free").toLowerCase();
     return PLAN_PRICES[plan] ?? 0;
+  };
+
+  const normalizeSourceChannel = (value: unknown) => {
+    if (typeof value !== "string") return "self_service";
+    const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_ -]/g, "").replace(/\s+/g, "_");
+    return normalized || "self_service";
+  };
+
+  const normalizeSlaTarget = (value: unknown) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 10;
+    return Math.max(1, Math.min(240, Math.round(parsed)));
+  };
+
+  const sanitizeBreachReason = (value: unknown) => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, 120) : null;
+  };
+
+  const sanitizeNoShowReason = (value: unknown) => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, 120) : null;
   };
 
   const getBillingConfig = () => {
@@ -1686,12 +1782,13 @@ async function startServer() {
       return res.status(400).json({ error: "Invalid service for this tenant" });
     }
     db.prepare(`
-      INSERT INTO queue (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO queue (id, tenant_id, name, branch, service, priority, source_channel, sla_target_minutes, checkInTime, status, first_called_time, calledTime, completedTime, reassign_count, handled_by_user_id, handled_by_email, outcome, breach_reason, no_show_reason, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       entry.id, tenantId, entry.name.trim(), entry.branch, entry.service,
-      entry.priority, entry.checkInTime, "Waiting",
-      null, null, null
+      entry.priority, normalizeSourceChannel(entry.sourceChannel), normalizeSlaTarget(entry.slaTargetMinutes),
+      entry.checkInTime, "Waiting",
+      null, null, null, 0, null, null, null, null, null, null
     );
     broadcast({ type: "QUEUE_UPDATED" });
     res.json({ status: "ok" });
@@ -1706,8 +1803,8 @@ async function startServer() {
     if (!canAccessTenant(dbUser, item.tenant_id || "default")) {
       return res.status(403).json({ error: "Access denied for this tenant" });
     }
-    db.prepare("UPDATE queue SET status = 'Processing', calledTime = ? WHERE id = ?").run(
-      calledTime, id
+    db.prepare("UPDATE queue SET status = 'Processing', calledTime = ?, first_called_time = COALESCE(first_called_time, ?), handled_by_user_id = ?, handled_by_email = ? WHERE id = ?").run(
+      calledTime, calledTime, dbUser.id, dbUser.email, id
     );
     broadcast({ type: "QUEUE_UPDATED" });
     res.json({ status: "ok" });
@@ -1736,7 +1833,7 @@ async function startServer() {
     }
 
     db.prepare(
-      "UPDATE queue SET branch = ?, service = ?, priority = 'Priority', status = 'Waiting', calledTime = NULL WHERE id = ?"
+      "UPDATE queue SET branch = ?, service = ?, priority = 'Priority', status = 'Waiting', calledTime = NULL, handled_by_user_id = NULL, handled_by_email = NULL, reassign_count = COALESCE(reassign_count, 0) + 1 WHERE id = ?"
     ).run(branch, service, id);
 
     broadcast({ type: "QUEUE_UPDATED" });
@@ -1760,13 +1857,18 @@ async function startServer() {
       return res.status(400).json({ error: "Only processing tickets can be recalled" });
     }
 
-    db.prepare("UPDATE queue SET calledTime = ? WHERE id = ?").run(new Date().toISOString(), id);
+    db.prepare("UPDATE queue SET calledTime = ?, handled_by_user_id = ?, handled_by_email = ? WHERE id = ?").run(
+      new Date().toISOString(),
+      dbUser.id,
+      dbUser.email,
+      id
+    );
     broadcast({ type: "QUEUE_UPDATED" });
     res.json({ status: "ok" });
   });
 
   app.post("/api/complete", requireAdmin, (req, res) => {
-    const { id, completedTime, notes } = req.body;
+    const { id, completedTime, notes, breachReason } = req.body;
     const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
     if (!dbUser) return res.status(401).json({ error: "Session invalid" });
     const item = db.prepare("SELECT * FROM queue WHERE id = ?").get(id) as any;
@@ -1777,12 +1879,15 @@ async function startServer() {
       const sanitizedNotes = typeof notes === "string" && notes.trim().length > 0
         ? notes.trim().slice(0, 500)
         : null;
+      const sanitizedBreachReason = sanitizeBreachReason(breachReason);
       db.prepare(`
-        INSERT INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO history (id, tenant_id, name, branch, service, priority, source_channel, sla_target_minutes, checkInTime, status, first_called_time, calledTime, completedTime, reassign_count, handled_by_user_id, handled_by_email, outcome, breach_reason, no_show_reason, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         item.id, item.tenant_id || 'default', item.name, item.branch, item.service, item.priority,
-        item.checkInTime, "Completed", item.calledTime, completedTime, sanitizedNotes
+        item.source_channel || 'self_service', item.sla_target_minutes || 10, item.checkInTime, "Completed",
+        item.first_called_time || item.calledTime, item.calledTime, completedTime,
+        item.reassign_count || 0, item.handled_by_user_id || null, item.handled_by_email || null, "completed", sanitizedBreachReason, null, sanitizedNotes
       );
       db.prepare("DELETE FROM queue WHERE id = ?").run(id);
       broadcast({ type: "QUEUE_UPDATED" });
@@ -1792,7 +1897,7 @@ async function startServer() {
   });
 
   app.post("/api/noshow", requireAdmin, (req, res) => {
-    const { id } = req.body;
+    const { id, noShowReason } = req.body;
     const dbUser = getUserFromToken(req.headers["x-admin-token"] as string);
     if (!dbUser) return res.status(401).json({ error: "Session invalid" });
     const item = db.prepare("SELECT * FROM queue WHERE id = ?").get(id) as any;
@@ -1800,12 +1905,15 @@ async function startServer() {
       if (!canAccessTenant(dbUser, item.tenant_id || "default")) {
         return res.status(403).json({ error: "Access denied for this tenant" });
       }
+      const sanitizedNoShowReason = sanitizeNoShowReason(noShowReason);
       db.prepare(`
-        INSERT INTO history (id, tenant_id, name, branch, service, priority, checkInTime, status, calledTime, completedTime, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO history (id, tenant_id, name, branch, service, priority, source_channel, sla_target_minutes, checkInTime, status, first_called_time, calledTime, completedTime, reassign_count, handled_by_user_id, handled_by_email, outcome, breach_reason, no_show_reason, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         item.id, item.tenant_id || 'default', item.name, item.branch, item.service, item.priority,
-        item.checkInTime, "No Show", item.calledTime, new Date().toISOString(), null
+        item.source_channel || 'self_service', item.sla_target_minutes || 10, item.checkInTime, "No Show",
+        item.first_called_time || item.calledTime, item.calledTime, new Date().toISOString(),
+        item.reassign_count || 0, item.handled_by_user_id || dbUser.id, item.handled_by_email || dbUser.email, "no_show", null, sanitizedNoShowReason, null
       );
       db.prepare("DELETE FROM queue WHERE id = ?").run(id);
       broadcast({ type: "QUEUE_UPDATED" });
