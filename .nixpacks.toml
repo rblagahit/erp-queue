@@ -1,20 +1,11 @@
-[buil]
-[build]
-cmds = [
-"npm install"
-"npm rebuild"
-"npm run build"
-]
-[start]
-cmd = "npm start"
-OEF
-cat > .nixpacks.toml << 'EOF'
-[build]
-cmds = [
-  "npm install",
-  "npm rebuild",
-  "npm run build"
-]
+[phases.setup]
+aptPkgs = ["python3", "make", "g++"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"
