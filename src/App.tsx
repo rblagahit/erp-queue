@@ -40,6 +40,8 @@ const CUSTOMER_TERMS: Record<string, { singular: string; plural: string; title: 
 const AnalyticsPanel = lazy(() => import('./features/dashboard/AnalyticsPanel'));
 const AdminOverviewPanel = lazy(() => import('./features/dashboard/AdminOverviewPanel'));
 const TellerPanel = lazy(() => import('./features/dashboard/TellerPanel'));
+const AdminOperationsPanel = lazy(() => import('./features/dashboard/AdminOperationsPanel'));
+const AdminReportsPanel = lazy(() => import('./features/dashboard/AdminReportsPanel'));
 
 interface AppProps {
   onGoToLanding?: () => void;
@@ -2024,6 +2026,86 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                   {adminArea !== 'overview' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
+                    {adminArea === 'operations' && (
+                      <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading operations…</div>}>
+                        <AdminOperationsPanel
+                          ipList={ipList}
+                          confirmRemoveIP={confirmRemoveIP}
+                          newIP={newIP}
+                          newIPLabel={newIPLabel}
+                          branches={branches}
+                          services={services}
+                          tenantPlan={tenantPlan}
+                          planLimits={planLimits}
+                          customerTerm={customerTerm}
+                          catalogBranchesText={catalogBranchesText}
+                          catalogServicesText={catalogServicesText}
+                          catalogSaving={catalogSaving}
+                          qrBranch={qrBranch}
+                          qrService={qrService}
+                          kioskUrl={kioskUrl}
+                          kioskQrImageUrl={kioskQrImageUrl}
+                          onAddIP={addIP}
+                          onRemoveIP={removeIP}
+                          onDetectMyIP={detectMyIP}
+                          onSetConfirmRemoveIP={setConfirmRemoveIP}
+                          onSetNewIP={setNewIP}
+                          onSetNewIPLabel={setNewIPLabel}
+                          onSaveCatalog={saveCatalog}
+                          onSetCustomerTerm={setCustomerTerm}
+                          onSetCatalogBranchesText={setCatalogBranchesText}
+                          onSetCatalogServicesText={setCatalogServicesText}
+                          onSetQrBranch={setQrBranch}
+                          onSetQrService={setQrService}
+                          onCopyKioskUrl={async () => {
+                            try {
+                              await navigator.clipboard.writeText(kioskUrl);
+                              showNotification('Kiosk URL copied.');
+                            } catch {
+                              showNotification('Failed to copy kiosk URL.', true);
+                            }
+                          }}
+                        />
+                      </Suspense>
+                    )}
+
+                    {adminArea === 'reports' && (
+                      <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading reports…</div>}>
+                        <AdminReportsPanel
+                          exportBranch={exportBranch}
+                          exportFrom={exportFrom}
+                          exportTo={exportTo}
+                          branches={branches}
+                          smtpHost={smtpHost}
+                          smtpPort={smtpPort}
+                          smtpSecure={smtpSecure}
+                          smtpUser={smtpUser}
+                          smtpPass={smtpPass}
+                          smtpFrom={smtpFrom}
+                          smtpTo={smtpTo}
+                          smtpSaving={smtpSaving}
+                          reportPeriod={reportPeriod}
+                          sendingReport={sendingReport}
+                          onSetExportBranch={setExportBranch}
+                          onSetExportFrom={setExportFrom}
+                          onSetExportTo={setExportTo}
+                          onDownloadAdminCSV={downloadAdminCSV}
+                          onDownloadPDF={downloadPDF}
+                          onClearFilters={() => { setExportFrom(''); setExportTo(''); setExportBranch('All'); }}
+                          onSaveSmtp={saveSmtp}
+                          onSetSmtpHost={setSmtpHost}
+                          onSetSmtpPort={setSmtpPort}
+                          onSetSmtpSecure={setSmtpSecure}
+                          onSetSmtpUser={setSmtpUser}
+                          onSetSmtpPass={setSmtpPass}
+                          onSetSmtpFrom={setSmtpFrom}
+                          onSetSmtpTo={setSmtpTo}
+                          onSetReportPeriod={setReportPeriod}
+                          onSendTestReport={sendTestReport}
+                        />
+                      </Suspense>
+                    )}
+
                     {/* COMPANY PROFILE PANEL */}
                     {adminArea === 'settings' && (
                     <div className="white-card rounded-2xl p-6 space-y-5">
@@ -2083,380 +2165,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     </div>
                     )}
 
-                    {/* IP WHITELIST PANEL */}
-                    {adminArea === 'operations' && (
-                    <div className="white-card rounded-2xl p-6 space-y-5">
-                      <div className="border-b pb-3">
-                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">IP Whitelist</h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Only whitelisted IPs can submit queue entries.</p>
-                      </div>
 
-                      {ipList.length === 0 ? (
-                        <div className="py-5 text-center bg-amber-50 border border-amber-100 rounded-xl">
-                          <p className="text-amber-700 text-xs font-bold uppercase">No IPs configured</p>
-                          <p className="text-amber-600 text-[10px] mt-1">All network access is currently allowed.<br />Add an IP below to restrict queue access.</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-2 max-h-52 overflow-y-auto no-scrollbar">
-                          {ipList.map(entry => (
-                            <div key={entry.ip} className="flex justify-between items-center bg-slate-50 border border-slate-100 px-4 py-3 rounded-xl">
-                              <div>
-                                <p className="text-xs font-black text-[#003366] font-mono">{entry.ip}</p>
-                                {entry.label && (
-                                  <p className="text-[9px] text-slate-400 uppercase font-bold mt-0.5">{entry.label}</p>
-                                )}
-                              </div>
-                              {confirmRemoveIP === entry.ip ? (
-                                <div className="flex items-center gap-1.5 ml-4 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => removeIP(entry.ip)}
-                                    className="text-[9px] font-black uppercase text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-md transition-colors"
-                                  >
-                                    Remove
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmRemoveIP(null)}
-                                    className="text-[9px] font-black uppercase text-slate-500 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmRemoveIP(entry.ip)}
-                                  className="text-red-400 hover:text-red-600 transition-colors ml-4 p-1 rounded-lg hover:bg-red-50 shrink-0"
-                                  title="Remove IP"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                                  </svg>
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      <form onSubmit={addIP} className="space-y-3 border-t pt-4">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">Add IP Address</p>
-                        <div className="flex gap-2">
-                          <input
-                            value={newIP}
-                            onChange={e => setNewIP(e.target.value)}
-                            placeholder="192.168.1.100"
-                            className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none font-mono focus:ring-2 focus:ring-amber-400 transition-all"
-                          />
-                          <button
-                            type="button"
-                            onClick={detectMyIP}
-                            className="text-[10px] font-bold text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors whitespace-nowrap"
-                            title="Auto-detect my IP"
-                          >
-                            My IP
-                          </button>
-                        </div>
-                        <input
-                          value={newIPLabel}
-                          onChange={e => setNewIPLabel(e.target.value)}
-                          placeholder="Label (e.g. Carcar Branch Terminal)"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                        />
-                        <button
-                          type="submit"
-                          className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest"
-                        >
-                          Add to Whitelist
-                        </button>
-                      </form>
-                    </div>
-                    )}
-
-                    {/* CSV EXPORT PANEL */}
-                    {adminArea === 'reports' && (
-                    <div className="white-card rounded-2xl p-6 space-y-5">
-                      <div className="border-b pb-3">
-                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Export Report</h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Download transaction history as CSV with date range filter.</p>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Branch Filter</label>
-                          <select
-                            aria-label="Export branch filter"
-                            value={exportBranch}
-                            onChange={e => setExportBranch(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-xs font-bold focus:ring-2 focus:ring-amber-400 transition-all"
-                          >
-                            <option value="All">All Branches</option>
-                            {branches.map(b => <option key={b} value={b}>{b}</option>)}
-                          </select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Date From</label>
-                            <input
-                              type="date"
-                              title="Start date for export"
-                              value={exportFrom}
-                              onChange={e => setExportFrom(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-xs focus:ring-2 focus:ring-amber-400 transition-all"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Date To</label>
-                            <input
-                              type="date"
-                              title="End date for export"
-                              value={exportTo}
-                              onChange={e => setExportTo(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-xs focus:ring-2 focus:ring-amber-400 transition-all"
-                            />
-                          </div>
-                        </div>
-
-                        {(exportFrom || exportTo || exportBranch !== 'All') && (
-                          <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-                            <p className="text-[10px] font-bold text-[#003366] uppercase mb-1">Active Filters</p>
-                            <p className="text-xs text-blue-700">
-                              {exportBranch !== 'All' && <span className="font-bold">{exportBranch} · </span>}
-                              {exportFrom && exportTo
-                                ? <span>{exportFrom} — {exportTo}</span>
-                                : exportFrom
-                                  ? <span>From {exportFrom}</span>
-                                  : exportTo
-                                    ? <span>Up to {exportTo}</span>
-                                    : <span>All dates</span>}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="space-y-2 border-t pt-4">
-                        <button
-                          type="button"
-                          onClick={downloadAdminCSV}
-                          className="w-full flex items-center justify-center gap-2 btn-primary py-3 rounded-xl font-bold text-xs uppercase tracking-widest shadow-lg shadow-blue-900/20"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                          </svg>
-                          Download CSV
-                        </button>
-                        <button
-                          type="button"
-                          onClick={downloadPDF}
-                          className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-800 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                          </svg>
-                          Download PDF Report
-                        </button>
-                        {(exportFrom || exportTo || exportBranch !== 'All') && (
-                          <button
-                            type="button"
-                            onClick={() => { setExportFrom(''); setExportTo(''); setExportBranch('All'); }}
-                            className="w-full py-2 text-[10px] font-bold text-slate-400 uppercase hover:text-slate-600 transition-colors"
-                          >
-                            Clear Filters
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    )}
-
-                    {/* OPERATIONS CATALOG PANEL */}
-                    {adminArea === 'operations' && (
-                    <div className="white-card rounded-2xl p-6 space-y-5">
-                      <div className="border-b pb-3">
-                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Branch / Service Catalog</h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          Tenant-specific queue configuration with plan enforcement ({tenantPlan.toUpperCase()} plan).
-                        </p>
-                      </div>
-
-                      <form onSubmit={saveCatalog} className="space-y-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Language Term</label>
-                          <select
-                            value={customerTerm}
-                            onChange={e => setCustomerTerm(e.target.value as 'customer' | 'client' | 'patient' | 'citizen')}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                          >
-                            <option value="customer">Customer</option>
-                            <option value="client">Client</option>
-                            <option value="patient">Patient</option>
-                            <option value="citizen">Citizen</option>
-                          </select>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Branches (1 per line)</label>
-                            <textarea
-                              rows={6}
-                              value={catalogBranchesText}
-                              onChange={e => setCatalogBranchesText(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                            />
-                            <p className="text-[10px] text-slate-400">
-                              Limit: {planLimits.maxBranches === null ? 'Unlimited' : planLimits.maxBranches}
-                            </p>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Services (1 per line)</label>
-                            <textarea
-                              rows={6}
-                              value={catalogServicesText}
-                              onChange={e => setCatalogServicesText(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                            />
-                            <p className="text-[10px] text-slate-400">
-                              Limit: {planLimits.maxServices === null ? 'Unlimited' : planLimits.maxServices}
-                            </p>
-                          </div>
-                        </div>
-
-                        <button type="submit" disabled={catalogSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
-                          {catalogSaving ? 'Saving…' : 'Save Catalog Settings'}
-                        </button>
-                      </form>
-                    </div>
-                    )}
-
-                    {/* QR KIOSK PANEL */}
-                    {adminArea === 'operations' && (
-                    <div className="white-card rounded-2xl p-6 space-y-5">
-                      <div className="border-b pb-3">
-                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Kiosk QR Check-in</h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Generate a QR link for touchless check-in per branch and service.</p>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Branch</label>
-                          <select
-                            value={qrBranch}
-                            onChange={e => setQrBranch(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                          >
-                            {branches.map(b => <option key={b} value={b}>{b}</option>)}
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Service</label>
-                          <select
-                            value={qrService}
-                            onChange={e => setQrService(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
-                          >
-                            {services.map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                        <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Kiosk URL</p>
-                        <p className="text-[11px] text-slate-600 break-all">{kioskUrl}</p>
-                      </div>
-
-                      <div className="flex flex-col items-center gap-3">
-                        <img src={kioskQrImageUrl} alt="Kiosk QR code" className="w-44 h-44 rounded-lg border border-slate-200 bg-white p-2" />
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(kioskUrl);
-                              showNotification('Kiosk URL copied.');
-                            } catch {
-                              showNotification('Failed to copy kiosk URL.', true);
-                            }
-                          }}
-                          className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-4 py-2 rounded-lg hover:bg-amber-50 transition-colors"
-                        >
-                          Copy Kiosk URL
-                        </button>
-                      </div>
-                    </div>
-                    )}
-
-                    {/* REPORTS SMTP PANEL */}
-                    {adminArea === 'reports' && (
-                    <div className="white-card rounded-2xl p-6 space-y-5">
-                      <div className="border-b pb-3">
-                        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Email / SMTP Settings</h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Configure your outbound email server for scheduled reports.</p>
-                      </div>
-                      <form onSubmit={saveSmtp} className="space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SMTP Host</label>
-                            <input value={smtpHost} onChange={e => setSmtpHost(e.target.value)} placeholder="smtp.gmail.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Port</label>
-                            <input value={smtpPort} onChange={e => setSmtpPort(e.target.value)} placeholder="587" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Username</label>
-                            <input value={smtpUser} onChange={e => setSmtpUser(e.target.value)} placeholder="user@example.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Password</label>
-                            <input type="password" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} placeholder="Leave blank to keep" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">From Address</label>
-                          <input value={smtpFrom} onChange={e => setSmtpFrom(e.target.value)} placeholder="no-reply@yourorg.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Report Recipient Email</label>
-                          <input type="email" value={smtpTo} onChange={e => setSmtpTo(e.target.value)} placeholder="manager@yourorg.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-                        </div>
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                          <input type="checkbox" checked={smtpSecure} onChange={e => setSmtpSecure(e.target.checked)} className="rounded" />
-                          <span className="text-[10px] font-bold text-slate-500 uppercase">Use TLS/SSL (port 465)</span>
-                        </label>
-                        <button type="submit" disabled={smtpSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
-                          {smtpSaving ? 'Saving…' : 'Save SMTP Settings'}
-                        </button>
-                      </form>
-
-                      <div className="border-t pt-4 space-y-3">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 block mb-2">Send Report Period</label>
-                          <div className="flex rounded-lg overflow-hidden border border-slate-200">
-                            <button
-                              type="button"
-                              onClick={() => setReportPeriod('daily')}
-                              className={`flex-1 py-2 text-xs font-bold uppercase transition-all ${reportPeriod === 'daily' ? 'bg-[#003366] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
-                            >Daily</button>
-                            <button
-                              type="button"
-                              onClick={() => setReportPeriod('monthly')}
-                              className={`flex-1 py-2 text-xs font-bold uppercase transition-all ${reportPeriod === 'monthly' ? 'bg-[#003366] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
-                            >Monthly</button>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={sendTestReport}
-                          disabled={sendingReport}
-                          className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-40"
-                        >
-                          {sendingReport ? 'Sending…' : 'Send Test Report Now'}
-                        </button>
-                      </div>
-                    </div>
-                    )}
 
                     {/* API KEY PANEL */}
                     {adminArea === 'settings' && (
