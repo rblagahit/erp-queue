@@ -27,6 +27,9 @@ type AdminSettingsPanelProps = {
   siteSeoDescription: string;
   siteSeoKeywords: string;
   supportEmail: string;
+  platformTextLogo: string;
+  platformTagLine: string;
+  platformLogoPreview: string;
   siteSettingsSaving: boolean;
   onSaveProfile: (e: FormEvent<HTMLFormElement>) => void;
   onUploadCompanyLogo: (file: File) => void;
@@ -49,6 +52,9 @@ type AdminSettingsPanelProps = {
   onSetSiteSeoDescription: (value: string) => void;
   onSetSiteSeoKeywords: (value: string) => void;
   onSetSupportEmail: (value: string) => void;
+  onSetPlatformTextLogo: (value: string) => void;
+  onSetPlatformTagLine: (value: string) => void;
+  onUploadPlatformLogo: (file: File) => void;
 };
 
 export default function AdminSettingsPanel({
@@ -75,6 +81,9 @@ export default function AdminSettingsPanel({
   siteSeoDescription,
   siteSeoKeywords,
   supportEmail,
+  platformTextLogo,
+  platformTagLine,
+  platformLogoPreview,
   siteSettingsSaving,
   onSaveProfile,
   onUploadCompanyLogo,
@@ -97,6 +106,9 @@ export default function AdminSettingsPanel({
   onSetSiteSeoDescription,
   onSetSiteSeoKeywords,
   onSetSupportEmail,
+  onSetPlatformTextLogo,
+  onSetPlatformTagLine,
+  onUploadPlatformLogo,
 }: AdminSettingsPanelProps) {
   return (
     <>
@@ -218,10 +230,64 @@ export default function AdminSettingsPanel({
         <div className="white-card rounded-2xl p-6 space-y-5">
           <div className="border-b pb-3">
             <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">SEO & Support</h4>
-            <p className="text-[10px] text-slate-400 mt-0.5">Control the public landing-page title tag, meta description, keywords, and the shared support email used by floating contact buttons.</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Control the global SaaS platform brand, landing-page SEO metadata, and the shared support email. This does not replace tenant company logos or tenant-specific dashboard data.</p>
           </div>
 
           <form onSubmit={onSaveSiteSettings} className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 space-y-4">
+              <div>
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Platform Branding</p>
+                <p className="text-[11px] text-slate-500 mt-1">Use this for the global product brand across the public landing page, shared app shell, and favicon. Tenant dashboards still keep their own company profile and logo.</p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Text Logo</label>
+                <input
+                  value={platformTextLogo}
+                  onChange={(e) => onSetPlatformTextLogo(e.target.value)}
+                  placeholder="LiteQue.com"
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Tag Line</label>
+                <input
+                  value={platformTagLine}
+                  onChange={(e) => onSetPlatformTagLine(e.target.value)}
+                  placeholder="Queue Intelligence for Multi-Tenant Operations"
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Platform Logo Upload</label>
+                <div className="flex items-center gap-3">
+                  {platformLogoPreview ? (
+                    <img src={platformLogoPreview} alt="Platform brand logo preview" className="w-14 h-14 rounded-xl object-cover border border-slate-200 bg-white" />
+                  ) : (
+                    <div className="w-14 h-14 rounded-xl border border-dashed border-slate-300 bg-white flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase">
+                      No Logo
+                    </div>
+                  )}
+                  <label className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
+                    Upload Platform Logo
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon,.ico"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) onUploadPlatformLogo(file);
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+                <p className="text-[10px] text-slate-400">This uploaded image is also used as the browser favicon for the platform.</p>
+              </div>
+            </div>
+
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Title Tag</label>
               <input
@@ -271,12 +337,14 @@ export default function AdminSettingsPanel({
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 space-y-2">
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Search Preview</p>
               <p className="text-sm font-bold text-[#2553d9]">{siteSeoTitle || 'Smart Queue | Enterprise Queue & Analytics'}</p>
+              <p className="text-[11px] font-semibold text-[#003366]">{platformTextLogo || 'Smart Queue'}</p>
+              <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">{platformTagLine || 'Queue Intelligence Platform'}</p>
               <p className="text-[11px] text-emerald-700">{supportEmail ? `Contact: ${supportEmail}` : 'Set a support email for visible contact CTAs'}</p>
               <p className="text-xs leading-relaxed text-slate-500">{siteSeoDescription || 'Real-time queue management, SLA tracking, KPI dashboards, and automated reports for branch operations.'}</p>
             </div>
 
             <button type="submit" disabled={siteSettingsSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
-              {siteSettingsSaving ? 'Saving…' : 'Save SEO & Support Settings'}
+              {siteSettingsSaving ? 'Saving…' : 'Save Platform Branding, SEO & Support'}
             </button>
           </form>
         </div>

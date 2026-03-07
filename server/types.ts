@@ -18,6 +18,7 @@ export type AppPaths = {
   rootDir: string;
   distDir: string;
   tenantLogoDir: string;
+  platformBrandingDir: string;
   billingFilesDir: string;
   paymentProofsDir: string;
   receiptsDir: string;

@@ -11,6 +11,9 @@ interface SiteConfig {
   seoDescription: string;
   seoKeywords: string;
   supportEmail: string;
+  textLogo: string;
+  tagLine: string;
+  logoUrl: string;
   starterPrice: number;
   proPrice: number;
   freeMonthlyTransactions: number;
@@ -21,6 +24,9 @@ const DEFAULT_SITE_CONFIG: SiteConfig = {
   seoDescription: 'Real-time queue management, SLA tracking, KPI dashboards, and branch analytics for banks, cooperatives, and service teams.',
   seoKeywords: 'queue management software, SLA tracking SaaS, KPI dashboard, branch analytics, banking queue system',
   supportEmail: '',
+  textLogo: 'Smart Queue',
+  tagLine: 'Queue Intelligence Platform',
+  logoUrl: '',
   starterPrice: 999,
   proPrice: 2499,
   freeMonthlyTransactions: 500,
@@ -44,6 +50,16 @@ function upsertHeadMeta(attribute: 'name' | 'property', key: string, content: st
   node.setAttribute('content', content);
 }
 
+function upsertHeadLink(selector: string, rel: string, href: string) {
+  let node = document.head.querySelector(selector) as HTMLLinkElement | null;
+  if (!node) {
+    node = document.createElement('link');
+    node.rel = rel;
+    document.head.appendChild(node);
+  }
+  node.href = href;
+}
+
 function applySiteMetadata(siteConfig: SiteConfig) {
   document.title = siteConfig.seoTitle || DEFAULT_SITE_CONFIG.seoTitle;
   upsertHeadMeta('name', 'description', siteConfig.seoDescription || DEFAULT_SITE_CONFIG.seoDescription);
@@ -60,6 +76,10 @@ function applySiteMetadata(siteConfig: SiteConfig) {
     document.head.appendChild(canonical);
   }
   canonical.href = window.location.origin + '/';
+  if (siteConfig.logoUrl) {
+    upsertHeadLink('link[rel="icon"]', 'icon', siteConfig.logoUrl);
+    upsertHeadLink('link[rel="apple-touch-icon"]', 'apple-touch-icon', siteConfig.logoUrl);
+  }
 }
 
 const FEATURES = [
@@ -342,6 +362,9 @@ export default function Landing({ onEnterApp }: Props) {
           seoDescription: data.seoDescription || DEFAULT_SITE_CONFIG.seoDescription,
           seoKeywords: data.seoKeywords || DEFAULT_SITE_CONFIG.seoKeywords,
           supportEmail: data.supportEmail || DEFAULT_SITE_CONFIG.supportEmail,
+          textLogo: data.textLogo || DEFAULT_SITE_CONFIG.textLogo,
+          tagLine: data.tagLine || DEFAULT_SITE_CONFIG.tagLine,
+          logoUrl: data.logoUrl || DEFAULT_SITE_CONFIG.logoUrl,
           starterPrice: Number.isFinite(Number(data.starterPrice)) ? Number(data.starterPrice) : DEFAULT_SITE_CONFIG.starterPrice,
           proPrice: Number.isFinite(Number(data.proPrice)) ? Number(data.proPrice) : DEFAULT_SITE_CONFIG.proPrice,
           freeMonthlyTransactions: Number.isFinite(Number(data.freeMonthlyTransactions)) ? Number(data.freeMonthlyTransactions) : DEFAULT_SITE_CONFIG.freeMonthlyTransactions,
@@ -503,6 +526,10 @@ export default function Landing({ onEnterApp }: Props) {
   };
 
   const plans = buildPlans(siteConfig);
+  const brandName = siteConfig.textLogo || DEFAULT_SITE_CONFIG.textLogo;
+  const brandTagLine = siteConfig.tagLine || DEFAULT_SITE_CONFIG.tagLine;
+  const brandLogoUrl = siteConfig.logoUrl || '';
+  const supportSubject = `${brandName} support or feature request`;
 
   return (
     <div className="min-h-screen bg-white text-slate-800 overflow-x-hidden">
@@ -511,11 +538,16 @@ export default function Landing({ onEnterApp }: Props) {
       <nav className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-100">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           {/* Logo */}
-          <div className="flex flex-col leading-none">
-            <span className="font-black text-lg text-[#003366] uppercase tracking-tight">
-              Smart <span className="text-amber-500">Queue</span>
-            </span>
-            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-[0.2em]">Queue Intelligence Platform</span>
+          <div className="flex items-center gap-3 leading-none">
+            {brandLogoUrl && (
+              <img src={brandLogoUrl} alt={`${brandName} logo`} className="w-10 h-10 rounded-xl object-cover border border-slate-200 bg-white" />
+            )}
+            <div className="flex flex-col">
+              <span className="font-black text-lg text-[#003366] tracking-tight">
+                {brandName}
+              </span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-[0.2em]">{brandTagLine}</span>
+            </div>
           </div>
 
           {/* Desktop Nav */}
@@ -923,10 +955,15 @@ export default function Landing({ onEnterApp }: Props) {
         <div className="max-w-6xl mx-auto px-6">
           <div className="flex flex-col md:flex-row justify-between items-center gap-6">
             <div>
-              <p className="font-black text-white text-lg uppercase tracking-tight">
-                Smart <span className="text-amber-400">Queue</span>
-              </p>
-              <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mt-1">Queue Intelligence Platform</p>
+              <div className="flex items-center justify-center md:justify-start gap-3">
+                {brandLogoUrl && (
+                  <img src={brandLogoUrl} alt={`${brandName} logo`} className="w-10 h-10 rounded-xl object-cover border border-white/10 bg-white" />
+                )}
+                <div>
+                  <p className="font-black text-white text-lg tracking-tight">{brandName}</p>
+                  <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mt-1">{brandTagLine}</p>
+                </div>
+              </div>
             </div>
             <div className="flex flex-wrap gap-6 text-[10px] font-bold uppercase tracking-widest">
               <a href="#features" className="hover:text-white transition-colors">Features</a>
@@ -938,7 +975,7 @@ export default function Landing({ onEnterApp }: Props) {
             </div>
           </div>
           <div className="border-t border-white/10 mt-8 pt-8 text-center text-[10px] text-blue-500">
-            © 2026 Smart Queue. All rights reserved.
+            © 2026 {brandName}. All rights reserved.
           </div>
         </div>
       </footer>
@@ -995,12 +1032,17 @@ export default function Landing({ onEnterApp }: Props) {
 
               {/* Logo mark */}
               <div className="text-center mb-6">
-                <div className="inline-flex items-center justify-center w-12 h-12 bg-[#003366] rounded-2xl mb-3 mx-auto">
-                  <svg className="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
-                </div>
-                <p className="font-black text-[#003366] text-sm uppercase tracking-widest">Smart Queue</p>
+                {brandLogoUrl ? (
+                  <img src={brandLogoUrl} alt={`${brandName} logo`} className="w-14 h-14 rounded-2xl object-cover border border-slate-200 bg-white mb-3 mx-auto" />
+                ) : (
+                  <div className="inline-flex items-center justify-center w-12 h-12 bg-[#003366] rounded-2xl mb-3 mx-auto">
+                    <svg className="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                )}
+                <p className="font-black text-[#003366] text-sm tracking-widest">{brandName}</p>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">{brandTagLine}</p>
               </div>
 
               {/* Tab switcher (only for login view) */}
@@ -1348,7 +1390,7 @@ export default function Landing({ onEnterApp }: Props) {
 
       {siteConfig.supportEmail && (
         <a
-          href={`mailto:${siteConfig.supportEmail}?subject=${encodeURIComponent('Smart Queue support or feature request')}`}
+          href={`mailto:${siteConfig.supportEmail}?subject=${encodeURIComponent(supportSubject)}`}
           className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-3 rounded-full bg-[#003366] px-5 py-3 text-white shadow-2xl shadow-blue-900/20 transition-all hover:-translate-y-0.5 hover:bg-[#002244]"
         >
           <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10">

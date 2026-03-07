@@ -295,3 +295,41 @@ test("free tier monthly transaction cap blocks new queue entries once reached", 
   assert.equal(billingMe.data.usage.count, 1);
   assert.equal(billingMe.data.usage.limit, 1);
 });
+
+test("super admin site branding settings round-trip without losing seo fields", async (t) => {
+  const runtime = await startTestServer();
+  t.after(async () => {
+    await runtime.dispose();
+  });
+
+  const superLogin = await requestJson(runtime.baseUrl, "/api/admin/login/super", {
+    body: {
+      email: process.env.ADMIN_EMAIL,
+      password: process.env.ADMIN_PASSWORD,
+    },
+  });
+  assert.equal(superLogin.response.status, 200);
+  const superToken = superLogin.data.token as string;
+
+  const saveSettings = await requestJson(runtime.baseUrl, "/api/admin/settings/site", {
+    token: superToken,
+    body: {
+      seoTitle: "LiteQue.com | Multi-Tenant Queue SaaS",
+      seoDescription: "Queue intelligence for multi-tenant service teams.",
+      seoKeywords: "queue saas, multi-tenant dashboard, sla tracking",
+      supportEmail: "support@liteque.com",
+      textLogo: "LiteQue.com",
+      tagLine: "Smart Queue Intelligence",
+    },
+  });
+  assert.equal(saveSettings.response.status, 200);
+  assert.equal(saveSettings.data.textLogo, "LiteQue.com");
+  assert.equal(saveSettings.data.tagLine, "Smart Queue Intelligence");
+
+  const publicConfig = await requestJson(runtime.baseUrl, "/api/public/site-config");
+  assert.equal(publicConfig.response.status, 200);
+  assert.equal(publicConfig.data.seoTitle, "LiteQue.com | Multi-Tenant Queue SaaS");
+  assert.equal(publicConfig.data.supportEmail, "support@liteque.com");
+  assert.equal(publicConfig.data.textLogo, "LiteQue.com");
+  assert.equal(publicConfig.data.tagLine, "Smart Queue Intelligence");
+});

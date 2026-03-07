@@ -58,6 +58,9 @@ export function registerAdminRoutes({
       seoDescription: 'Real-time queue management, SLA tracking, KPI dashboards, and branch analytics for banks, cooperatives, and service teams.',
       seoKeywords: 'queue management software, SLA tracking SaaS, KPI dashboard, branch analytics, banking queue system',
       supportEmail: getPrimarySupportEmail(),
+      textLogo: 'Smart Queue',
+      tagLine: 'Queue Intelligence Platform',
+      logoUrl: '',
     };
     const billingConfig = helpers.getBillingConfig();
     const row = db.prepare("SELECT value FROM settings WHERE key = 'site_config'").get() as { value?: string } | undefined;
@@ -70,6 +73,9 @@ export function registerAdminRoutes({
       seoDescription: typeof parsed?.seoDescription === 'string' && parsed.seoDescription.trim() ? parsed.seoDescription.trim().slice(0, 200) : defaults.seoDescription,
       seoKeywords: typeof parsed?.seoKeywords === 'string' && parsed.seoKeywords.trim() ? parsed.seoKeywords.trim().slice(0, 240) : defaults.seoKeywords,
       supportEmail: typeof parsed?.supportEmail === 'string' && parsed.supportEmail.trim() ? parsed.supportEmail.trim().slice(0, 160) : defaults.supportEmail,
+      textLogo: typeof parsed?.textLogo === 'string' && parsed.textLogo.trim() ? parsed.textLogo.trim().slice(0, 80) : defaults.textLogo,
+      tagLine: typeof parsed?.tagLine === 'string' && parsed.tagLine.trim() ? parsed.tagLine.trim().slice(0, 120) : defaults.tagLine,
+      logoUrl: typeof parsed?.logoUrl === 'string' && parsed.logoUrl.trim() ? parsed.logoUrl.trim().slice(0, 240) : defaults.logoUrl,
       starterPrice: Number.isFinite(Number(billingConfig.starterPrice)) ? Number(billingConfig.starterPrice) : 999,
       proPrice: Number.isFinite(Number(billingConfig.proPrice)) ? Number(billingConfig.proPrice) : 2499,
       freeMonthlyTransactions: Number.isFinite(Number(billingConfig.freeMonthlyTransactions)) ? Number(billingConfig.freeMonthlyTransactions) : 500,
@@ -98,12 +104,54 @@ export function registerAdminRoutes({
     const supportEmail = typeof req.body?.supportEmail === 'string' && req.body.supportEmail.trim()
       ? req.body.supportEmail.trim().slice(0, 160)
       : getPrimarySupportEmail();
+    const textLogo = typeof req.body?.textLogo === 'string' && req.body.textLogo.trim()
+      ? req.body.textLogo.trim().slice(0, 80)
+      : current.textLogo;
+    const tagLine = typeof req.body?.tagLine === 'string' && req.body.tagLine.trim()
+      ? req.body.tagLine.trim().slice(0, 120)
+      : current.tagLine;
+    let logoUrl = current.logoUrl;
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail)) {
       return res.status(400).json({ error: 'Support email must be a valid email address' });
     }
 
-    const nextConfig = { seoTitle, seoDescription, seoKeywords, supportEmail };
+    const logoDataUrl = typeof req.body?.logoDataUrl === 'string' ? req.body.logoDataUrl : '';
+    if (logoDataUrl) {
+      const match = logoDataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp|svg\+xml|x-icon|vnd\.microsoft\.icon));base64,(.+)$/i);
+      if (!match) return res.status(400).json({ error: 'Platform logo must be a valid image.' });
+      const mime = match[1].toLowerCase();
+      const ext = mime.includes('png')
+        ? 'png'
+        : mime.includes('webp')
+          ? 'webp'
+          : mime.includes('svg')
+            ? 'svg'
+            : mime.includes('icon')
+              ? 'ico'
+              : 'jpg';
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length > 2 * 1024 * 1024) return res.status(400).json({ error: 'Platform logo is too large (max 2MB).' });
+
+      const filename = `platform-brand-${Date.now()}.${ext}`;
+      const filePath = path.join(paths.platformBrandingDir, filename);
+      fs.writeFileSync(filePath, buffer);
+      if (logoUrl && logoUrl.startsWith('/platform-branding/')) {
+        const previousPath = path.join(paths.platformBrandingDir, path.basename(logoUrl));
+        if (fs.existsSync(previousPath)) fs.unlinkSync(previousPath);
+      }
+      logoUrl = `/platform-branding/${filename}`;
+    }
+
+    const nextConfig = {
+      seoTitle,
+      seoDescription,
+      seoKeywords,
+      supportEmail,
+      textLogo,
+      tagLine,
+      logoUrl,
+    };
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('site_config', ?)").run(JSON.stringify(nextConfig));
     res.json(nextConfig);
   });

@@ -30,6 +30,10 @@ const TENANT_LOGO_DIR = path.join(__dirname, "tenant-logos");
 if (!fs.existsSync(TENANT_LOGO_DIR)) {
   fs.mkdirSync(TENANT_LOGO_DIR, { recursive: true });
 }
+const PLATFORM_BRANDING_DIR = path.join(__dirname, "platform-branding");
+if (!fs.existsSync(PLATFORM_BRANDING_DIR)) {
+  fs.mkdirSync(PLATFORM_BRANDING_DIR, { recursive: true });
+}
 const BILLING_FILES_DIR = path.join(__dirname, "billing-files");
 const PAYMENT_PROOFS_DIR = path.join(BILLING_FILES_DIR, "proofs");
 const RECEIPTS_DIR = path.join(BILLING_FILES_DIR, "receipts");
@@ -77,6 +81,7 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
 
   app.use(express.json());
   app.use("/tenant-logos", express.static(TENANT_LOGO_DIR));
+  app.use("/platform-branding", express.static(PLATFORM_BRANDING_DIR));
   app.use("/billing-files", express.static(BILLING_FILES_DIR));
 
   // ===== DATABASE =====
@@ -847,6 +852,7 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
     rootDir: __dirname,
     distDir: path.resolve(__dirname, "dist"),
     tenantLogoDir: TENANT_LOGO_DIR,
+    platformBrandingDir: PLATFORM_BRANDING_DIR,
     billingFilesDir: BILLING_FILES_DIR,
     paymentProofsDir: PAYMENT_PROOFS_DIR,
     receiptsDir: RECEIPTS_DIR,

@@ -56,6 +56,22 @@ interface AppProps {
 type AdminArea = 'overview' | 'access' | 'catalog' | 'kiosk' | 'profile' | 'integrations' | 'subscription' | 'seo' | 'exports' | 'delivery' | 'billing' | 'users' | 'tenants';
 type AdminParentKey = 'operations' | 'administration' | 'insights';
 
+const DEFAULT_PLATFORM_BRAND = {
+  textLogo: 'Smart Queue',
+  tagLine: 'Queue Intelligence Platform',
+  logoUrl: '',
+};
+
+function upsertBrandLink(selector: string, rel: string, href: string) {
+  let node = document.head.querySelector(selector) as HTMLLinkElement | null;
+  if (!node) {
+    node = document.createElement('link');
+    node.rel = rel;
+    document.head.appendChild(node);
+  }
+  node.href = href;
+}
+
 export default function App({ onGoToLanding, initialView = 'teller', loginRole = 'tenant_admin' }: AppProps = {}) {
   const [view, setView] = useState<'client' | 'teller' | 'display' | 'analytics' | 'admin'>(initialView);
   const [queue, setQueue] = useState<QueueEntry[]>([]);
@@ -101,6 +117,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [siteSeoDescription, setSiteSeoDescription] = useState('');
   const [siteSeoKeywords, setSiteSeoKeywords] = useState('');
   const [supportEmail, setSupportEmail] = useState('');
+  const [platformTextLogo, setPlatformTextLogo] = useState(DEFAULT_PLATFORM_BRAND.textLogo);
+  const [platformTagLine, setPlatformTagLine] = useState(DEFAULT_PLATFORM_BRAND.tagLine);
+  const [platformLogoUrl, setPlatformLogoUrl] = useState(DEFAULT_PLATFORM_BRAND.logoUrl);
+  const [platformLogoDataUrl, setPlatformLogoDataUrl] = useState('');
   const [siteSettingsSaving, setSiteSettingsSaving] = useState(false);
 
   // Role-based access
@@ -325,10 +345,15 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
   // Load IPs, settings, SMTP, and super-admin data when entering admin view
   useEffect(() => {
-    if (view === 'admin') {
-      void loadPublicSiteConfig();
+    void loadPublicSiteConfig();
+  }, []);
+
+  useEffect(() => {
+    if (platformLogoUrl) {
+      upsertBrandLink('link[rel="icon"]', 'icon', platformLogoUrl);
+      upsertBrandLink('link[rel="apple-touch-icon"]', 'apple-touch-icon', platformLogoUrl);
     }
-  }, [view]);
+  }, [platformLogoUrl]);
 
   useEffect(() => {
     if (view === 'admin' && adminToken) {
@@ -389,6 +414,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       if (!res.ok) return;
       const data = await res.json();
       setSupportEmail(data.supportEmail || '');
+      setPlatformTextLogo(data.textLogo || DEFAULT_PLATFORM_BRAND.textLogo);
+      setPlatformTagLine(data.tagLine || DEFAULT_PLATFORM_BRAND.tagLine);
+      setPlatformLogoUrl(data.logoUrl || DEFAULT_PLATFORM_BRAND.logoUrl);
     } catch (err) {
       console.error('Failed to load public site config', err);
     }
@@ -405,10 +433,28 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         setSiteSeoDescription(data.seoDescription || '');
         setSiteSeoKeywords(data.seoKeywords || '');
         setSupportEmail(data.supportEmail || '');
+        setPlatformTextLogo(data.textLogo || DEFAULT_PLATFORM_BRAND.textLogo);
+        setPlatformTagLine(data.tagLine || DEFAULT_PLATFORM_BRAND.tagLine);
+        setPlatformLogoUrl(data.logoUrl || DEFAULT_PLATFORM_BRAND.logoUrl);
+        setPlatformLogoDataUrl('');
       }
     } catch (err) {
       console.error('Failed to load site settings', err);
     }
+  };
+
+  const handlePlatformLogoSelection = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      if (!result) {
+        showNotification('Failed to read the platform logo file.', true);
+        return;
+      }
+      setPlatformLogoDataUrl(result);
+    };
+    reader.onerror = () => showNotification('Failed to read the platform logo file.', true);
+    reader.readAsDataURL(file);
   };
 
   const saveSiteSettings = async (e: React.FormEvent) => {
@@ -424,6 +470,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
           seoDescription: siteSeoDescription,
           seoKeywords: siteSeoKeywords,
           supportEmail,
+          textLogo: platformTextLogo,
+          tagLine: platformTagLine,
+          logoDataUrl: platformLogoDataUrl,
         }),
       });
       if (res.ok) {
@@ -432,13 +481,17 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         setSiteSeoDescription(data.seoDescription || '');
         setSiteSeoKeywords(data.seoKeywords || '');
         setSupportEmail(data.supportEmail || '');
-        showNotification('SEO and support settings saved.');
+        setPlatformTextLogo(data.textLogo || DEFAULT_PLATFORM_BRAND.textLogo);
+        setPlatformTagLine(data.tagLine || DEFAULT_PLATFORM_BRAND.tagLine);
+        setPlatformLogoUrl(data.logoUrl || DEFAULT_PLATFORM_BRAND.logoUrl);
+        setPlatformLogoDataUrl('');
+        showNotification('Platform branding, SEO, and support settings saved.');
       } else {
-        const err = await res.json().catch(() => ({ error: 'Failed to save SEO and support settings.' }));
-        showNotification(err.error || 'Failed to save SEO and support settings.', true);
+        const err = await res.json().catch(() => ({ error: 'Failed to save platform branding and support settings.' }));
+        showNotification(err.error || 'Failed to save platform branding and support settings.', true);
       }
     } catch {
-      showNotification('Failed to save SEO and support settings.', true);
+      showNotification('Failed to save platform branding and support settings.', true);
     } finally {
       setSiteSettingsSaving(false);
     }
@@ -1771,6 +1824,11 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
   };
 
+  const brandName = platformTextLogo || DEFAULT_PLATFORM_BRAND.textLogo;
+  const brandTagLine = platformTagLine || DEFAULT_PLATFORM_BRAND.tagLine;
+  const brandLogoPreview = platformLogoDataUrl || platformLogoUrl;
+  const supportSubject = `${brandName} support or feature request`;
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Navigation */}
@@ -1780,13 +1838,18 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
             <button
               type="button"
               onClick={onGoToLanding}
-              className="text-left group"
+              className="text-left group flex items-center gap-3"
               title="Back to home"
             >
-              <h1 className="font-bold text-xl text-[#003366] leading-none uppercase tracking-tight group-hover:text-[#002244] transition-colors">
-                Smart <span className="text-amber-500 font-extrabold">Queue</span>
-              </h1>
-              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Smart Queue Intelligence</p>
+              {platformLogoUrl && (
+                <img src={platformLogoUrl} alt={`${brandName} logo`} className="w-11 h-11 rounded-xl object-cover border border-slate-200 bg-white" />
+              )}
+              <div className="flex flex-col">
+                <h1 className="font-bold text-xl text-[#003366] leading-none tracking-tight group-hover:text-[#002244] transition-colors">
+                  {brandName}
+                </h1>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">{brandTagLine}</p>
+              </div>
             </button>
           </div>
 
@@ -1874,7 +1937,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     <span className="text-[10px] font-bold text-amber-700 uppercase tracking-tighter">Self-Service Kiosk</span>
                   </div>
                   <h2 className="text-3xl font-extrabold text-[#003366]">Get Your Ticket</h2>
-                  <p className="text-slate-500 mt-2 text-sm">Welcome to Smart Queue. Please check in below.</p>
+                  <p className="text-slate-500 mt-2 text-sm">Welcome to {brandName}. Please check in below.</p>
                 </div>
 
                 <form onSubmit={handleCheckIn} className="space-y-5">
@@ -2435,6 +2498,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           siteSeoDescription={siteSeoDescription}
                           siteSeoKeywords={siteSeoKeywords}
                           supportEmail={supportEmail}
+                          platformTextLogo={platformTextLogo}
+                          platformTagLine={platformTagLine}
+                          platformLogoPreview={brandLogoPreview}
                           siteSettingsSaving={siteSettingsSaving}
                           onSaveProfile={saveProfile}
                           onUploadCompanyLogo={uploadCompanyLogo}
@@ -2457,6 +2523,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           onSetSiteSeoDescription={setSiteSeoDescription}
                           onSetSiteSeoKeywords={setSiteSeoKeywords}
                           onSetSupportEmail={setSupportEmail}
+                          onSetPlatformTextLogo={setPlatformTextLogo}
+                          onSetPlatformTagLine={setPlatformTagLine}
+                          onUploadPlatformLogo={handlePlatformLogoSelection}
                         />
                       </Suspense>
                     </div>
@@ -2505,7 +2574,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
       {view === 'admin' && supportEmail && (
         <a
-          href={`mailto:${supportEmail}?subject=${encodeURIComponent('Smart Queue support or feature request')}`}
+          href={`mailto:${supportEmail}?subject=${encodeURIComponent(supportSubject)}`}
           className="fixed bottom-8 left-8 z-[90] inline-flex items-center gap-3 rounded-full bg-[#003366] px-5 py-3 text-white shadow-2xl shadow-blue-900/20 transition-all hover:-translate-y-0.5 hover:bg-[#002244]"
         >
           <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10">
@@ -2540,13 +2609,21 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       {/* Footer */}
       <footer className="mt-12 py-8 text-center bg-white border-t border-slate-100">
         <div className="container mx-auto px-4">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.3em]">Smart Queue Intelligence Platform</p>
+          <div className="flex items-center justify-center gap-3">
+            {platformLogoUrl && (
+              <img src={platformLogoUrl} alt={`${brandName} logo`} className="w-10 h-10 rounded-xl object-cover border border-slate-200 bg-white" />
+            )}
+            <div>
+              <p className="text-sm font-bold text-[#003366] tracking-tight">{brandName}</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.3em]">{brandTagLine}</p>
+            </div>
+          </div>
           <div className="flex justify-center gap-6 mt-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
             <span className="hover:text-blue-900 cursor-pointer">Security Policy</span>
             <span className="hover:text-blue-900 cursor-pointer">Branch Network</span>
             <span className="hover:text-blue-900 cursor-pointer">Support Hub</span>
           </div>
-          <p className="text-[10px] text-slate-300 mt-6">© 2026 Smart Queue. All rights reserved.</p>
+          <p className="text-[10px] text-slate-300 mt-6">© 2026 {brandName}. All rights reserved.</p>
         </div>
       </footer>
     </div>
