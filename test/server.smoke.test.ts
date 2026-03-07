@@ -10,12 +10,14 @@ type JsonRequestOptions = {
   method?: string;
   token?: string;
   body?: unknown;
+  headers?: Record<string, string>;
 };
 
 async function requestJson(baseUrl: string, route: string, options: JsonRequestOptions = {}) {
   const headers: Record<string, string> = {};
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (options.token) headers["x-admin-token"] = options.token;
+  Object.assign(headers, options.headers || {});
 
   const response = await fetch(`${baseUrl}${route}`, {
     method: options.method || (options.body === undefined ? "GET" : "POST"),
@@ -337,4 +339,61 @@ test("super admin site branding settings round-trip without losing seo fields", 
   assert.equal(publicConfig.data.supportEmail, "support@liteque.com");
   assert.equal(publicConfig.data.textLogo, "LiteQue.com");
   assert.equal(publicConfig.data.tagLine, "Smart Queue Intelligence");
+});
+
+test("trusted device mode allows dynamic-IP branch check-in after browser approval", async (t) => {
+  const runtime = await startTestServer();
+  t.after(async () => {
+    await runtime.dispose();
+  });
+
+  const tenant = await registerTenant(runtime.baseUrl, "trusted-device");
+
+  const registerDevice = await requestJson(runtime.baseUrl, "/api/admin/trusted-devices", {
+    token: tenant.token,
+    body: {
+      label: "Carcar Front Desk Browser",
+      branch: tenant.branch,
+    },
+  });
+  assert.equal(registerDevice.response.status, 201);
+  assert.ok(registerDevice.data.deviceToken);
+
+  const enableTrustedMode = await requestJson(runtime.baseUrl, "/api/admin/access", {
+    token: tenant.token,
+    body: { accessMode: "trusted_devices" },
+  });
+  assert.equal(enableTrustedMode.response.status, 200);
+
+  const blockedCheckIn = await requestJson(runtime.baseUrl, "/api/queue", {
+    body: {
+      id: "SQ-TD001",
+      tenant_id: tenant.tenantId,
+      name: "Walk-in Customer",
+      branch: tenant.branch,
+      service: tenant.service,
+      priority: "Regular",
+      sourceChannel: "self_service",
+      slaTargetMinutes: 10,
+      checkInTime: new Date().toISOString(),
+    },
+  });
+  assert.equal(blockedCheckIn.response.status, 403);
+  assert.equal(blockedCheckIn.data.code, "TRUSTED_DEVICE_REQUIRED");
+
+  const allowedCheckIn = await requestJson(runtime.baseUrl, "/api/queue", {
+    headers: { "x-device-token": registerDevice.data.deviceToken as string },
+    body: {
+      id: "SQ-TD002",
+      tenant_id: tenant.tenantId,
+      name: "Approved Browser Customer",
+      branch: tenant.branch,
+      service: tenant.service,
+      priority: "Regular",
+      sourceChannel: "self_service",
+      slaTargetMinutes: 10,
+      checkInTime: new Date().toISOString(),
+    },
+  });
+  assert.equal(allowedCheckIn.response.status, 200);
 });

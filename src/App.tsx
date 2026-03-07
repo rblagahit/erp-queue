@@ -22,6 +22,14 @@ interface IPEntry {
   addedAt: string;
 }
 
+interface TrustedDeviceEntry {
+  id: string;
+  branch: string;
+  label: string;
+  createdAt: string;
+  lastSeenAt: string;
+}
+
 const DEFAULT_BRANCHES = [
   "Carcar Branch", "Moalboal Branch", "Talisay Branch", "Carbon Branch",
   "Solinea Branch", "Mandaue Branch", "Danao Branch", "Bogo Branch",
@@ -62,6 +70,8 @@ const DEFAULT_PLATFORM_BRAND = {
   tagLine: 'Queue Intelligence Platform',
   logoUrl: '',
 };
+
+const getTrustedDeviceStorageKey = (tenantId: string) => `trustedDeviceToken:${tenantId || 'default'}`;
 
 function upsertBrandLink(selector: string, rel: string, href: string) {
   let node = document.head.querySelector(selector) as HTMLLinkElement | null;
@@ -104,6 +114,12 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [resetConfirm, setResetConfirm] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
   const [ipList, setIpList] = useState<IPEntry[]>([]);
+  const [trustedDevices, setTrustedDevices] = useState<TrustedDeviceEntry[]>([]);
+  const [trustedAccessMode, setTrustedAccessMode] = useState<'ip_whitelist' | 'hybrid' | 'trusted_devices'>('ip_whitelist');
+  const [trustedDeviceLabel, setTrustedDeviceLabel] = useState('');
+  const [trustedDeviceBranch, setTrustedDeviceBranch] = useState(DEFAULT_BRANCHES[0]);
+  const [trustedDeviceBusy, setTrustedDeviceBusy] = useState(false);
+  const [accessModeSaving, setAccessModeSaving] = useState(false);
   const [newIP, setNewIP] = useState('');
   const [newIPLabel, setNewIPLabel] = useState('');
   const [exportFrom, setExportFrom] = useState('');
@@ -283,7 +299,8 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     if (exportBranch !== 'All' && !branches.includes(exportBranch)) setExportBranch('All');
     if (!branches.includes(clientBranch)) setClientBranch(branches[0] || '');
     if (!branches.includes(qrBranch)) setQrBranch(branches[0] || '');
-  }, [branches, filterBranch, analyticsBranch, exportBranch]);
+    if (!branches.includes(trustedDeviceBranch)) setTrustedDeviceBranch(branches[0] || '');
+  }, [branches, filterBranch, analyticsBranch, exportBranch, clientBranch, qrBranch, trustedDeviceBranch]);
 
   useEffect(() => {
     if (!services.includes(clientService)) setClientService(services[0] || '');
@@ -361,6 +378,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   useEffect(() => {
     if (view === 'admin' && adminToken) {
       loadIPs();
+      loadAccessSettings();
       loadSettings();
       loadSmtp();
       loadProfile();
@@ -393,6 +411,24 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       else if (res.status === 401) { setAdminToken(null); localStorage.removeItem('adminToken'); }
     } catch (err) {
       console.error('Failed to load IPs', err);
+    }
+  };
+
+  const loadAccessSettings = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/access', { headers: { 'x-admin-token': t } });
+      if (res.ok) {
+        const data = await res.json();
+        setTrustedAccessMode(data.accessMode || 'ip_whitelist');
+        setTrustedDevices(Array.isArray(data.trustedDevices) ? data.trustedDevices : []);
+      } else if (res.status === 401) {
+        setAdminToken(null);
+        localStorage.removeItem('adminToken');
+      }
+    } catch (err) {
+      console.error('Failed to load trusted device settings', err);
     }
   };
 
@@ -1276,6 +1312,89 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     }
   };
 
+  const saveAccessMode = async (nextMode: 'ip_whitelist' | 'hybrid' | 'trusted_devices') => {
+    if (!adminToken) return;
+    setAccessModeSaving(true);
+    try {
+      const res = await fetch('/api/admin/access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ accessMode: nextMode }),
+      });
+      if (res.ok) {
+        setTrustedAccessMode(nextMode);
+        showNotification(
+          nextMode === 'ip_whitelist'
+            ? 'Queue access is now limited to whitelisted IPs.'
+            : nextMode === 'hybrid'
+              ? 'Queue access now allows either trusted devices or whitelisted IPs.'
+              : 'Queue access now requires a trusted device.'
+        );
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to save access mode.' }));
+        showNotification(err.error || 'Failed to save access mode.', true);
+      }
+    } catch {
+      showNotification('Failed to save access mode. Check connection.', true);
+    } finally {
+      setAccessModeSaving(false);
+    }
+  };
+
+  const registerTrustedDevice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    if (!trustedDeviceLabel.trim()) {
+      showNotification('Enter a device label before approving this browser.', true);
+      return;
+    }
+    if (!trustedDeviceBranch.trim()) {
+      showNotification('Select a branch for this trusted device.', true);
+      return;
+    }
+    setTrustedDeviceBusy(true);
+    try {
+      const res = await fetch('/api/admin/trusted-devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ label: trustedDeviceLabel.trim(), branch: trustedDeviceBranch }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem(getTrustedDeviceStorageKey(tenantId), data.deviceToken);
+        setTrustedDevices(Array.isArray(data.trustedDevices) ? data.trustedDevices : []);
+        setTrustedDeviceLabel('');
+        showNotification(`This browser is now trusted for ${trustedDeviceBranch}.`);
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to register trusted device.' }));
+        showNotification(err.error || 'Failed to register trusted device.', true);
+      }
+    } catch {
+      showNotification('Failed to register trusted device. Check connection.', true);
+    } finally {
+      setTrustedDeviceBusy(false);
+    }
+  };
+
+  const revokeTrustedDevice = async (id: string) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch(`/api/admin/trusted-devices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-token': adminToken },
+      });
+      if (res.ok) {
+        await loadAccessSettings();
+        showNotification('Trusted device revoked.');
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to revoke trusted device.' }));
+        showNotification(err.error || 'Failed to revoke trusted device.', true);
+      }
+    } catch {
+      showNotification('Failed to revoke trusted device. Check connection.', true);
+    }
+  };
+
   const downloadAdminCSV = async () => {
     if (!adminToken) return;
     const params = new URLSearchParams();
@@ -1391,9 +1510,12 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     };
 
     try {
+      const trustedDeviceToken = localStorage.getItem(getTrustedDeviceStorageKey(tenantId)) || '';
+      const requestHeaders: HeadersInit = { ...headers };
+      if (trustedDeviceToken) requestHeaders['x-device-token'] = trustedDeviceToken;
       const res = await fetch('/api/queue', {
         method: 'POST',
-        headers,
+        headers: requestHeaders,
         body: JSON.stringify({ ...entry, tenant_id: tenantId })
       });
       if (res.ok) {
@@ -2557,6 +2679,12 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         <AdminOperationsPanel
                           activeSection={adminArea as 'access' | 'catalog' | 'kiosk'}
                           ipList={ipList}
+                          trustedDevices={trustedDevices}
+                          trustedAccessMode={trustedAccessMode}
+                          trustedDeviceLabel={trustedDeviceLabel}
+                          trustedDeviceBranch={trustedDeviceBranch}
+                          trustedDeviceBusy={trustedDeviceBusy}
+                          accessModeSaving={accessModeSaving}
                           confirmRemoveIP={confirmRemoveIP}
                           newIP={newIP}
                           newIPLabel={newIPLabel}
@@ -2573,9 +2701,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           kioskUrl={kioskUrl}
                           kioskQrImageUrl={kioskQrImageUrl}
                           onAddIP={addIP}
+                          onSaveAccessMode={saveAccessMode}
+                          onRegisterTrustedDevice={registerTrustedDevice}
+                          onRevokeTrustedDevice={revokeTrustedDevice}
                           onRemoveIP={removeIP}
                           onDetectMyIP={detectMyIP}
                           onSetConfirmRemoveIP={setConfirmRemoveIP}
+                          onSetTrustedDeviceLabel={setTrustedDeviceLabel}
+                          onSetTrustedDeviceBranch={setTrustedDeviceBranch}
                           onSetNewIP={setNewIP}
                           onSetNewIPLabel={setNewIPLabel}
                           onSaveCatalog={saveCatalog}

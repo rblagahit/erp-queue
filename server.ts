@@ -145,6 +145,17 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
       addedAt TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS trusted_devices (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      branch TEXT,
+      label TEXT,
+      token_hash TEXT NOT NULL UNIQUE,
+      createdAt TEXT,
+      lastSeenAt TEXT,
+      created_by TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS admin_sessions (
       token TEXT PRIMARY KEY,
       createdAt TEXT,
@@ -335,6 +346,7 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_history_tenant_completed ON history(tenant_id, completedTime);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_history_branch_completed ON history(branch, completedTime);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_queue_tenant_status ON queue(tenant_id, status);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_trusted_devices_tenant ON trusted_devices(tenant_id, branch, createdAt);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_branches_tenant ON tenant_branches(tenant_id, name);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_services_tenant ON tenant_services(tenant_id, name);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_payment_submissions_status ON payment_submissions(status, submittedAt);`);
@@ -577,6 +589,40 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
     };
   };
 
+  const getTenantSettings = (tenantId: string) => {
+    const tenant = getTenant(tenantId);
+    if (!tenant?.settings) return {};
+    try {
+      return JSON.parse(tenant.settings);
+    } catch {
+      return {};
+    }
+  };
+
+  const getTenantAccessMode = (tenantId: string) => {
+    const settings = getTenantSettings(tenantId);
+    const raw = typeof settings?.accessMode === "string" ? settings.accessMode : "ip_whitelist";
+    return ["ip_whitelist", "hybrid", "trusted_devices"].includes(raw) ? raw : "ip_whitelist";
+  };
+
+  const hashTrustedDeviceToken = (token: string) => {
+    return crypto.createHash("sha256").update(token).digest("hex");
+  };
+
+  const getTrustedDevice = (req: express.Request, tenantId: string, branch?: string) => {
+    const rawToken = req.headers["x-device-token"];
+    const deviceToken = typeof rawToken === "string" ? rawToken.trim() : "";
+    if (!deviceToken) return null;
+    const tokenHash = hashTrustedDeviceToken(deviceToken);
+    const device = db.prepare(
+      "SELECT * FROM trusted_devices WHERE tenant_id = ? AND token_hash = ?"
+    ).get(tenantId, tokenHash) as any;
+    if (!device) return null;
+    if (device.branch && branch && device.branch !== branch) return null;
+    db.prepare("UPDATE trusted_devices SET lastSeenAt = ? WHERE id = ?").run(new Date().toISOString(), device.id);
+    return device;
+  };
+
   const checkIPAccess = (
     req: express.Request,
     res: express.Response,
@@ -586,18 +632,38 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
     const token = req.headers["x-admin-token"] as string | undefined;
     if (token && getUserFromToken(token)) return next();
 
+    const tenantId = typeof req.body?.tenant_id === "string" && req.body.tenant_id.trim()
+      ? req.body.tenant_id.trim()
+      : "default";
+    const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
+    const accessMode = getTenantAccessMode(tenantId);
+    const trustedDevice = getTrustedDevice(req, tenantId, branch);
+    if ((accessMode === "trusted_devices" || accessMode === "hybrid") && trustedDevice) return next();
+
     const whitelist = (
       db.prepare("SELECT ip FROM ip_whitelist").all() as { ip: string }[]
     ).map((r) => r.ip);
 
-    // If no IPs are configured, allow all (setup mode)
-    if (whitelist.length === 0) return next();
-
-    const clientIP = getClientIP(req);
-    if (whitelist.includes(clientIP)) return next();
+    if (accessMode !== "trusted_devices") {
+      // If no IPs are configured, allow all only while still on whitelist mode.
+      if (whitelist.length === 0) return next();
+      const clientIP = getClientIP(req);
+      if (whitelist.includes(clientIP)) return next();
+      if (accessMode === "hybrid") {
+        return res.status(403).json({
+          error: `Access denied. IP address ${clientIP} is not authorized and this browser is not a trusted device for the selected branch.`,
+          code: "TRUSTED_DEVICE_OR_IP_REQUIRED",
+        });
+      }
+      return res.status(403).json({
+        error: `Access denied. IP address ${clientIP} is not authorized to access this queue.`,
+        code: "IP_NOT_WHITELISTED",
+      });
+    }
 
     return res.status(403).json({
-      error: `Access denied. IP address ${clientIP} is not authorized to access this queue.`,
+      error: "Access denied. This branch uses trusted devices only. Register this browser from Tenant Admin > Operations > Queue Access first.",
+      code: "TRUSTED_DEVICE_REQUIRED",
     });
   };
 

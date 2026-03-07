@@ -179,6 +179,72 @@ export function registerAdminRoutes({
     res.json({ status: "ok" });
   });
 
+  app.get("/api/admin/access", helpers.requireAdmin, (req, res) => {
+    const dbUser = helpers.getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const tenant = db.prepare("SELECT settings FROM tenants WHERE id = ?").get(dbUser.tenant_id) as any;
+    const settings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    const accessMode = typeof settings?.accessMode === "string" ? settings.accessMode : "ip_whitelist";
+    const trustedDevices = db.prepare(
+      "SELECT id, branch, label, createdAt, lastSeenAt FROM trusted_devices WHERE tenant_id = ? ORDER BY createdAt DESC"
+    ).all(dbUser.tenant_id);
+    res.json({
+      accessMode: ["ip_whitelist", "hybrid", "trusted_devices"].includes(accessMode) ? accessMode : "ip_whitelist",
+      trustedDevices,
+    });
+  });
+
+  app.post("/api/admin/access", helpers.requireAdmin, (req, res) => {
+    const dbUser = helpers.getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const accessMode = typeof req.body?.accessMode === "string" ? req.body.accessMode.trim() : "";
+    if (!["ip_whitelist", "hybrid", "trusted_devices"].includes(accessMode)) {
+      return res.status(400).json({ error: "Invalid access mode" });
+    }
+    const tenant = db.prepare("SELECT settings FROM tenants WHERE id = ?").get(dbUser.tenant_id) as any;
+    const currentSettings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    const nextSettings = { ...currentSettings, accessMode };
+    db.prepare("UPDATE tenants SET settings = ? WHERE id = ?").run(JSON.stringify(nextSettings), dbUser.tenant_id);
+    res.json({ status: "ok", accessMode });
+  });
+
+  app.post("/api/admin/trusted-devices", helpers.requireAdmin, (req, res) => {
+    const dbUser = helpers.getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    const label = typeof req.body?.label === "string" ? req.body.label.trim().slice(0, 120) : "";
+    const branch = typeof req.body?.branch === "string" ? req.body.branch.trim().slice(0, 120) : "";
+    if (!label) return res.status(400).json({ error: "Device label is required" });
+    if (!branch) return res.status(400).json({ error: "Branch is required" });
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    const id = crypto.randomUUID();
+    db.prepare(
+      "INSERT INTO trusted_devices (id, tenant_id, branch, label, token_hash, createdAt, lastSeenAt, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      id,
+      dbUser.tenant_id,
+      branch,
+      label,
+      tokenHash,
+      new Date().toISOString(),
+      new Date().toISOString(),
+      dbUser.email || null
+    );
+
+    const trustedDevices = db.prepare(
+      "SELECT id, branch, label, createdAt, lastSeenAt FROM trusted_devices WHERE tenant_id = ? ORDER BY createdAt DESC"
+    ).all(dbUser.tenant_id);
+    res.status(201).json({ status: "ok", id, deviceToken: rawToken, trustedDevices });
+  });
+
+  app.delete("/api/admin/trusted-devices/:id", helpers.requireAdmin, (req, res) => {
+    const dbUser = helpers.getUserFromToken(req.headers["x-admin-token"] as string);
+    if (!dbUser) return res.status(401).json({ error: "Session invalid" });
+    db.prepare("DELETE FROM trusted_devices WHERE id = ? AND tenant_id = ?").run(req.params.id, dbUser.tenant_id);
+    res.json({ status: "ok" });
+  });
+
   app.get("/api/admin/settings", helpers.requireAdmin, (_req, res) => {
     const row = db.prepare("SELECT value FROM settings WHERE key = 'apiKey'").get() as { value: string } | undefined;
     const key = row?.value ?? "";
