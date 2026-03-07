@@ -543,7 +543,7 @@ export default function Landing({ onEnterApp }: Props) {
               <img src={brandLogoUrl} alt={`${brandName} logo`} className="w-10 h-10 rounded-xl object-cover border border-slate-200 bg-white" />
             )}
             <div className="flex flex-col">
-              <span className="font-black text-lg text-[#003366] tracking-tight">
+              <span className="font-black text-[2rem] md:text-[2.45rem] text-[#003366] tracking-tight leading-none">
                 {brandName}
               </span>
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-[0.2em]">{brandTagLine}</span>
@@ -960,7 +960,7 @@ export default function Landing({ onEnterApp }: Props) {
                   <img src={brandLogoUrl} alt={`${brandName} logo`} className="w-10 h-10 rounded-xl object-cover border border-white/10 bg-white" />
                 )}
                 <div>
-                  <p className="font-black text-white text-lg tracking-tight">{brandName}</p>
+                  <p className="font-black text-2xl tracking-tight leading-none text-white">{brandName}</p>
                   <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mt-1">{brandTagLine}</p>
                 </div>
               </div>
@@ -1041,7 +1041,7 @@ export default function Landing({ onEnterApp }: Props) {
                     </svg>
                   </div>
                 )}
-                <p className="font-black text-[#003366] text-sm tracking-widest">{brandName}</p>
+                <p className="font-black text-lg tracking-widest text-[#003366] leading-none">{brandName}</p>
                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">{brandTagLine}</p>
               </div>
 

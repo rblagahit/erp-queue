@@ -2010,7 +2010,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                 <img src={platformLogoUrl} alt={`${brandName} logo`} className="w-11 h-11 rounded-xl object-cover border border-slate-200 bg-white" />
               )}
               <div className="flex flex-col">
-                <h1 className="font-bold text-xl text-[#003366] leading-none tracking-tight group-hover:text-[#002244] transition-colors">
+                <h1 className="font-bold text-2xl md:text-[2rem] text-[#003366] leading-none tracking-tight group-hover:text-[#002244] transition-colors">
                   {brandName}
                 </h1>
                 <p className="text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">{brandTagLine}</p>
@@ -2781,7 +2781,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
               <img src={platformLogoUrl} alt={`${brandName} logo`} className="w-10 h-10 rounded-xl object-cover border border-slate-200 bg-white" />
             )}
             <div>
-              <p className="text-sm font-bold text-[#003366] tracking-tight">{brandName}</p>
+              <p className="text-lg font-bold text-[#003366] tracking-tight leading-none">{brandName}</p>
               <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.3em]">{brandTagLine}</p>
             </div>
           </div>
