@@ -14,6 +14,21 @@ type KpiSnapshot = {
   topBreachReason: string;
 };
 
+type InsightRow = {
+  label: string;
+  value: number;
+  note: string;
+};
+
+type DashboardInsights = {
+  trendRows: InsightRow[];
+  branchRows: InsightRow[];
+  serviceRows: InsightRow[];
+  reasonRows: InsightRow[];
+  tenantRows: InsightRow[];
+  planRows: InsightRow[];
+};
+
 type AdminOverviewPanelProps = {
   setupChecklist: SetupChecklist;
   currentUserRole: string | null;
@@ -22,11 +37,105 @@ type AdminOverviewPanelProps = {
   billingMe: any;
   billingReviewBusy: string | null;
   kpiSnapshot: KpiSnapshot;
+  dashboardInsights: DashboardInsights;
   onOpenOperations: () => void;
   onRefreshBillingSubmissions: () => void;
   onConfirmPaymentSubmission: (id: string) => void;
   onRejectPaymentSubmission: (id: string) => void;
 };
+
+function HorizontalBarList({
+  title,
+  subtitle,
+  data,
+  tone = 'bg-[#003366]',
+}: {
+  title: string;
+  subtitle: string;
+  data: InsightRow[];
+  tone?: string;
+}) {
+  const maxValue = Math.max(1, ...data.map((item) => item.value));
+
+  return (
+    <div className="white-card rounded-2xl p-6 space-y-4">
+      <div className="border-b pb-3">
+        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">{title}</h4>
+        <p className="text-[10px] text-slate-400 mt-0.5">{subtitle}</p>
+      </div>
+      <div className="space-y-4">
+        {data.map((item) => (
+          <div key={item.label} className="space-y-1.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-700 truncate">{item.label}</p>
+                <p className="text-[10px] text-slate-400">{item.note}</p>
+              </div>
+              <p className="text-sm font-black text-[#003366]">{item.value}</p>
+            </div>
+            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.max(6, Math.round((item.value / maxValue) * 100))}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SparklineCard({
+  title,
+  subtitle,
+  data,
+}: {
+  title: string;
+  subtitle: string;
+  data: InsightRow[];
+}) {
+  const maxValue = Math.max(1, ...data.map((item) => item.value));
+  const width = 420;
+  const height = 120;
+  const step = data.length > 1 ? width / (data.length - 1) : width;
+  const points = data.map((item, index) => {
+    const x = index * step;
+    const y = height - (item.value / maxValue) * (height - 24) - 12;
+    return `${x},${Math.max(12, y)}`;
+  }).join(' ');
+
+  return (
+    <div className="white-card rounded-2xl p-6 space-y-4">
+      <div className="border-b pb-3">
+        <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">{title}</h4>
+        <p className="text-[10px] text-slate-400 mt-0.5">{subtitle}</p>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-32 rounded-xl bg-slate-50 border border-slate-100">
+        <polyline
+          fill="none"
+          stroke="#003366"
+          strokeWidth="4"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          points={points}
+        />
+        {data.map((item, index) => {
+          const x = index * step;
+          const y = height - (item.value / maxValue) * (height - 24) - 12;
+          return (
+            <circle key={`${item.label}-${index}`} cx={x} cy={Math.max(12, y)} r="4" fill="#f59e0b" />
+          );
+        })}
+      </svg>
+      <div className="grid grid-cols-2 md:grid-cols-7 gap-2">
+        {data.map((item) => (
+          <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+            <p className="text-[10px] font-black text-slate-400 uppercase">{item.label}</p>
+            <p className="text-sm font-black text-[#003366]">{item.value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function AdminOverviewPanel({
   setupChecklist,
@@ -36,6 +145,7 @@ export default function AdminOverviewPanel({
   billingMe,
   billingReviewBusy,
   kpiSnapshot,
+  dashboardInsights,
   onOpenOperations,
   onRefreshBillingSubmissions,
   onConfirmPaymentSubmission,
@@ -108,6 +218,32 @@ export default function AdminOverviewPanel({
               <p className="text-[10px] font-bold text-slate-400 uppercase">Downgraded (Month)</p>
               <p className="text-2xl font-black text-slate-700">{billingOverview?.downgradedThisMonth ?? 0}</p>
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <SparklineCard
+              title="7-Day Platform Volume Trend"
+              subtitle="Recent transaction flow across all tenants using the shared SaaS platform."
+              data={dashboardInsights.trendRows}
+            />
+            <HorizontalBarList
+              title="Top Tenant Activity"
+              subtitle="Most active tenant dashboards by transaction count."
+              data={dashboardInsights.tenantRows}
+              tone="bg-cyan-500"
+            />
+            <HorizontalBarList
+              title="Tenant Plan Mix"
+              subtitle="Current plan distribution across the multi-tenant customer base."
+              data={dashboardInsights.planRows}
+              tone="bg-violet-500"
+            />
+            <HorizontalBarList
+              title="Top Branch Load"
+              subtitle="Branches handling the highest transaction volume across tenants."
+              data={dashboardInsights.branchRows}
+              tone="bg-amber-500"
+            />
           </div>
 
           <div className="white-card rounded-2xl p-6 space-y-4">
@@ -232,7 +368,7 @@ export default function AdminOverviewPanel({
       <div className="white-card rounded-2xl p-6 space-y-4">
         <div className="border-b pb-3">
           <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">SLA / KPI Snapshot</h4>
-          <p className="text-[10px] text-slate-400 mt-0.5">Lightweight operational metrics from entry, first response, and closure.</p>
+          <p className="text-[10px] text-slate-400 mt-0.5">Operational metrics from entry, first response, reassignment, and closure.</p>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
@@ -256,6 +392,36 @@ export default function AdminOverviewPanel({
             <p className="text-sm font-black text-slate-700">{kpiSnapshot.topBreachReason}</p>
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        {currentUserRole !== 'super_admin' && (
+          <>
+            <SparklineCard
+              title="7-Day Transaction Trend"
+              subtitle="Daily ticket movement to show whether volume is rising or stabilizing."
+              data={dashboardInsights.trendRows}
+            />
+            <HorizontalBarList
+              title="Branches by Transaction Volume"
+              subtitle="Sorted so managers can quickly see which branches carry the heaviest load."
+              data={dashboardInsights.branchRows}
+              tone="bg-[#003366]"
+            />
+          </>
+        )}
+        <HorizontalBarList
+          title="Service Demand Mix"
+          subtitle="Which transaction types are consuming the most queue capacity."
+          data={dashboardInsights.serviceRows}
+          tone="bg-emerald-500"
+        />
+        <HorizontalBarList
+          title="Reason Signals"
+          subtitle="Top tagged reasons from breaches, no-shows, holds, and resolution outcomes."
+          data={dashboardInsights.reasonRows}
+          tone="bg-rose-500"
+        />
       </div>
     </div>
   );

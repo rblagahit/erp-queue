@@ -55,6 +55,7 @@ interface AppProps {
 
 type AdminArea = 'overview' | 'access' | 'catalog' | 'kiosk' | 'profile' | 'integrations' | 'subscription' | 'seo' | 'exports' | 'delivery' | 'billing' | 'users' | 'tenants';
 type AdminParentKey = 'operations' | 'administration' | 'insights';
+type SiteSettingsErrors = Partial<Record<'platformTextLogo' | 'platformTagLine' | 'platformLogo' | 'supportEmail' | 'siteSeoTitle' | 'siteSeoDescription' | 'siteSeoKeywords', string>>;
 
 const DEFAULT_PLATFORM_BRAND = {
   textLogo: 'Smart Queue',
@@ -121,6 +122,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [platformTagLine, setPlatformTagLine] = useState(DEFAULT_PLATFORM_BRAND.tagLine);
   const [platformLogoUrl, setPlatformLogoUrl] = useState(DEFAULT_PLATFORM_BRAND.logoUrl);
   const [platformLogoDataUrl, setPlatformLogoDataUrl] = useState('');
+  const [siteSettingsErrors, setSiteSettingsErrors] = useState<SiteSettingsErrors>({});
   const [siteSettingsSaving, setSiteSettingsSaving] = useState(false);
 
   // Role-based access
@@ -211,6 +213,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
   const normalizeQueueEntry = (entry: QueueApiEntry): QueueEntry => ({
     ...entry,
+    tenantId: entry.tenantId ?? entry.tenant_id ?? null,
     sourceChannel: entry.sourceChannel ?? entry.source_channel ?? 'self_service',
     slaTargetMinutes: entry.slaTargetMinutes ?? entry.sla_target_minutes ?? SLA_THRESHOLD_MINUTES,
     firstCalledTime: entry.firstCalledTime ?? entry.first_called_time ?? null,
@@ -437,13 +440,63 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         setPlatformTagLine(data.tagLine || DEFAULT_PLATFORM_BRAND.tagLine);
         setPlatformLogoUrl(data.logoUrl || DEFAULT_PLATFORM_BRAND.logoUrl);
         setPlatformLogoDataUrl('');
+        setSiteSettingsErrors({});
       }
     } catch (err) {
       console.error('Failed to load site settings', err);
     }
   };
 
+  const clearSiteSettingError = (field: keyof SiteSettingsErrors) => {
+    setSiteSettingsErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const handlePlatformTextLogoChange = (value: string) => {
+    setPlatformTextLogo(value);
+    clearSiteSettingError('platformTextLogo');
+  };
+
+  const handlePlatformTagLineChange = (value: string) => {
+    setPlatformTagLine(value);
+    clearSiteSettingError('platformTagLine');
+  };
+
+  const handleSupportEmailChange = (value: string) => {
+    setSupportEmail(value);
+    clearSiteSettingError('supportEmail');
+  };
+
+  const handleSiteSeoTitleChange = (value: string) => {
+    setSiteSeoTitle(value);
+    clearSiteSettingError('siteSeoTitle');
+  };
+
+  const handleSiteSeoDescriptionChange = (value: string) => {
+    setSiteSeoDescription(value);
+    clearSiteSettingError('siteSeoDescription');
+  };
+
+  const handleSiteSeoKeywordsChange = (value: string) => {
+    setSiteSeoKeywords(value);
+    clearSiteSettingError('siteSeoKeywords');
+  };
+
   const handlePlatformLogoSelection = (file: File) => {
+    const maxLogoBytes = 2 * 1024 * 1024;
+    if (file.size > maxLogoBytes) {
+      setPlatformLogoDataUrl('');
+      setSiteSettingsErrors((prev) => ({
+        ...prev,
+        platformLogo: 'Platform logo is too large. Use PNG, JPG, WEBP, SVG, or ICO up to 2048 KB.',
+      }));
+      showNotification('Platform logo is too large. Keep it at 2048 KB or below.', true);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const result = typeof reader.result === 'string' ? reader.result : '';
@@ -451,6 +504,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         showNotification('Failed to read the platform logo file.', true);
         return;
       }
+      clearSiteSettingError('platformLogo');
       setPlatformLogoDataUrl(result);
     };
     reader.onerror = () => showNotification('Failed to read the platform logo file.', true);
@@ -460,6 +514,32 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const saveSiteSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminToken) return;
+    const nextErrors: SiteSettingsErrors = {};
+    const normalizedTextLogo = platformTextLogo.trim();
+    const normalizedTagLine = platformTagLine.trim();
+    const normalizedSupportEmail = supportEmail.trim();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!normalizedTextLogo) {
+      nextErrors.platformTextLogo = 'Enter the product text logo. Example: LiteQue.com';
+    }
+    if (!normalizedTagLine) {
+      nextErrors.platformTagLine = 'Add a short platform tag line shown below the text logo.';
+    }
+    if (!normalizedSupportEmail) {
+      nextErrors.supportEmail = 'Enter the support email used by the support and feature-request buttons.';
+    } else if (!emailPattern.test(normalizedSupportEmail)) {
+      nextErrors.supportEmail = 'Use a valid email format like support@liteque.com';
+    }
+    if (platformLogoDataUrl && !platformLogoDataUrl.startsWith('data:image/')) {
+      nextErrors.platformLogo = 'Upload a valid image file for the platform logo.';
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setSiteSettingsErrors(nextErrors);
+      showNotification('Review the highlighted platform branding fields before saving.', true);
+      return;
+    }
+
     setSiteSettingsSaving(true);
     try {
       const res = await fetch('/api/admin/settings/site', {
@@ -469,9 +549,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
           seoTitle: siteSeoTitle,
           seoDescription: siteSeoDescription,
           seoKeywords: siteSeoKeywords,
-          supportEmail,
-          textLogo: platformTextLogo,
-          tagLine: platformTagLine,
+          supportEmail: normalizedSupportEmail,
+          textLogo: normalizedTextLogo,
+          tagLine: normalizedTagLine,
           logoDataUrl: platformLogoDataUrl,
         }),
       });
@@ -485,6 +565,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         setPlatformTagLine(data.tagLine || DEFAULT_PLATFORM_BRAND.tagLine);
         setPlatformLogoUrl(data.logoUrl || DEFAULT_PLATFORM_BRAND.logoUrl);
         setPlatformLogoDataUrl('');
+        setSiteSettingsErrors({});
         showNotification('Platform branding, SEO, and support settings saved.');
       } else {
         const err = await res.json().catch(() => ({ error: 'Failed to save platform branding and support settings.' }));
@@ -1651,6 +1732,90 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     };
   }, [history]);
 
+  const dashboardInsights = useMemo(() => {
+    const recentHistory = history
+      .filter((entry) => entry.completedTime || entry.checkInTime)
+      .sort((a, b) => {
+        const aTime = new Date(a.completedTime || a.checkInTime || 0).getTime();
+        const bTime = new Date(b.completedTime || b.checkInTime || 0).getTime();
+        return bTime - aTime;
+      });
+
+    const branchCounts = new Map<string, number>();
+    const serviceCounts = new Map<string, number>();
+    const reasonCounts = new Map<string, number>();
+    const tenantCounts = new Map<string, number>();
+    const planCounts = new Map<string, number>();
+    const dailyCounts = new Map<string, number>();
+    const tenantNames = new Map<string, string>();
+
+    adminTenants.forEach((tenant) => {
+      tenantNames.set(tenant.id, tenant.name || tenant.id);
+      planCounts.set(tenant.plan || 'free', (planCounts.get(tenant.plan || 'free') || 0) + 1);
+    });
+
+    recentHistory.forEach((entry) => {
+      branchCounts.set(entry.branch, (branchCounts.get(entry.branch) || 0) + 1);
+      serviceCounts.set(entry.service, (serviceCounts.get(entry.service) || 0) + 1);
+      if (currentUserRole === 'super_admin' && entry.tenantId) {
+        tenantCounts.set(entry.tenantId, (tenantCounts.get(entry.tenantId) || 0) + 1);
+      }
+      const activityDate = new Date(entry.completedTime || entry.checkInTime || Date.now());
+      const dayKey = activityDate.toISOString().slice(0, 10);
+      dailyCounts.set(dayKey, (dailyCounts.get(dayKey) || 0) + 1);
+
+      const pushReason = (prefix: string, raw: string | null | undefined) => {
+        const label = raw?.trim();
+        if (!label) return;
+        const key = `${prefix}: ${label}`;
+        reasonCounts.set(key, (reasonCounts.get(key) || 0) + 1);
+      };
+      pushReason('Breach', entry.breachReason);
+      pushReason('No-show', entry.noShowReason);
+      pushReason('Hold', entry.pauseReason);
+      pushReason('Resolution', entry.resolutionCode);
+    });
+
+    const toSortedRows = (map: Map<string, number>, emptyLabel: string, top = 6, formatter?: (label: string, value: number) => string) => {
+      const rows = [...map.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, top)
+        .map(([label, value]) => ({
+          label,
+          value,
+          note: formatter ? formatter(label, value) : `${value} records`,
+        }));
+      return rows.length > 0 ? rows : [{ label: emptyLabel, value: 0, note: 'No records yet' }];
+    };
+
+    const trendRows = (() => {
+      const ordered = Array.from({ length: 7 }, (_unused, index) => {
+        const date = new Date();
+        date.setHours(0, 0, 0, 0);
+        date.setDate(date.getDate() - (6 - index));
+        const key = date.toISOString().slice(0, 10);
+        return {
+          label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          value: dailyCounts.get(key) || 0,
+          note: `${dailyCounts.get(key) || 0} transactions`,
+        };
+      });
+      return ordered.some((row) => row.value > 0) ? ordered : [{ label: 'No data', value: 0, note: 'No activity yet' }];
+    })();
+
+    return {
+      trendRows,
+      branchRows: toSortedRows(branchCounts, 'No branches yet', 8, (_label, value) => `${value} transactions`),
+      serviceRows: toSortedRows(serviceCounts, 'No services yet', 8, (_label, value) => `${value} transactions`),
+      reasonRows: toSortedRows(reasonCounts, 'No reasons logged', 6, (_label, value) => `${value} tagged items`),
+      tenantRows: toSortedRows(tenantCounts, 'No tenant activity yet', 6, (label, value) => `${tenantNames.get(label) || label} · ${value} transactions`).map((row) => ({
+        ...row,
+        label: tenantNames.get(row.label) || row.label,
+      })),
+      planRows: toSortedRows(planCounts, 'No plans yet', 3, (_label, value) => `${value} tenants`),
+    };
+  }, [history, adminTenants, currentUserRole]);
+
   const setupChecklist = useMemo(() => {
     const profileDone = !!companyName.trim() && !!industry.trim() && !!contactEmail.trim() && !!contactPhone.trim();
     const operationsDone = branches.length > 0 && services.length > 0;
@@ -2377,6 +2542,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         billingMe={billingMe}
                         billingReviewBusy={billingReviewBusy}
                         kpiSnapshot={kpiSnapshot}
+                        dashboardInsights={dashboardInsights}
                         onOpenOperations={() => setAdminArea('access')}
                         onRefreshBillingSubmissions={() => { void loadBillingSubmissions(); }}
                         onConfirmPaymentSubmission={confirmPaymentSubmission}
@@ -2501,6 +2667,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           platformTextLogo={platformTextLogo}
                           platformTagLine={platformTagLine}
                           platformLogoPreview={brandLogoPreview}
+                          siteSettingsErrors={siteSettingsErrors}
                           siteSettingsSaving={siteSettingsSaving}
                           onSaveProfile={saveProfile}
                           onUploadCompanyLogo={uploadCompanyLogo}
@@ -2519,12 +2686,12 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           onSetPaymentNotes={setPaymentNotes}
                           onSetPaymentProofDataUrl={setPaymentProofDataUrl}
                           onSaveSiteSettings={saveSiteSettings}
-                          onSetSiteSeoTitle={setSiteSeoTitle}
-                          onSetSiteSeoDescription={setSiteSeoDescription}
-                          onSetSiteSeoKeywords={setSiteSeoKeywords}
-                          onSetSupportEmail={setSupportEmail}
-                          onSetPlatformTextLogo={setPlatformTextLogo}
-                          onSetPlatformTagLine={setPlatformTagLine}
+                          onSetSiteSeoTitle={handleSiteSeoTitleChange}
+                          onSetSiteSeoDescription={handleSiteSeoDescriptionChange}
+                          onSetSiteSeoKeywords={handleSiteSeoKeywordsChange}
+                          onSetSupportEmail={handleSupportEmailChange}
+                          onSetPlatformTextLogo={handlePlatformTextLogoChange}
+                          onSetPlatformTagLine={handlePlatformTagLineChange}
                           onUploadPlatformLogo={handlePlatformLogoSelection}
                         />
                       </Suspense>

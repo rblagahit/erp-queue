@@ -79,7 +79,7 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
   // Only trust proxy headers when the deployment explicitly opts in.
   app.set("trust proxy", process.env.TRUST_PROXY === "true");
 
-  app.use(express.json());
+  app.use(express.json({ limit: "6mb" }));
   app.use("/tenant-logos", express.static(TENANT_LOGO_DIR));
   app.use("/platform-branding", express.static(PLATFORM_BRANDING_DIR));
   app.use("/billing-files", express.static(BILLING_FILES_DIR));

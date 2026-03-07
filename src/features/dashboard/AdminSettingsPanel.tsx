@@ -2,6 +2,7 @@ import type { ChangeEvent, FormEvent } from 'react';
 
 type BillingMe = any;
 type SettingsSection = 'profile' | 'integrations' | 'subscription' | 'seo';
+type SiteSettingsErrors = Partial<Record<'platformTextLogo' | 'platformTagLine' | 'platformLogo' | 'supportEmail' | 'siteSeoTitle' | 'siteSeoDescription' | 'siteSeoKeywords', string>>;
 
 type AdminSettingsPanelProps = {
   activeSection: SettingsSection;
@@ -30,6 +31,7 @@ type AdminSettingsPanelProps = {
   platformTextLogo: string;
   platformTagLine: string;
   platformLogoPreview: string;
+  siteSettingsErrors: SiteSettingsErrors;
   siteSettingsSaving: boolean;
   onSaveProfile: (e: FormEvent<HTMLFormElement>) => void;
   onUploadCompanyLogo: (file: File) => void;
@@ -84,6 +86,7 @@ export default function AdminSettingsPanel({
   platformTextLogo,
   platformTagLine,
   platformLogoPreview,
+  siteSettingsErrors,
   siteSettingsSaving,
   onSaveProfile,
   onUploadCompanyLogo,
@@ -110,6 +113,11 @@ export default function AdminSettingsPanel({
   onSetPlatformTagLine,
   onUploadPlatformLogo,
 }: AdminSettingsPanelProps) {
+  const fieldClass = (hasError?: string, plain = false) =>
+    `${plain ? 'bg-white' : 'bg-slate-50'} border rounded-lg px-3 py-2.5 text-xs outline-none transition-all focus:ring-2 focus:ring-amber-400 ${
+      hasError ? 'border-red-300 focus:ring-red-200' : 'border-slate-200'
+    }`;
+
   return (
     <>
       {activeSection === 'profile' && (
@@ -234,6 +242,12 @@ export default function AdminSettingsPanel({
           </div>
 
           <form onSubmit={onSaveSiteSettings} className="space-y-4">
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-4 space-y-2">
+              <p className="text-[10px] font-black text-blue-700 uppercase tracking-[0.2em]">Bare Minimum To Save</p>
+              <p className="text-[11px] text-blue-900">Required fields: Text Logo, Tag Line, and Support Email. Platform logo is optional, but if you upload one it will also become the favicon.</p>
+              <p className="text-[10px] text-blue-700">Logo upload guide: PNG, JPG, WEBP, SVG, or ICO only. Maximum file size: 2048 KB.</p>
+            </div>
+
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 space-y-4">
               <div>
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Platform Branding</p>
@@ -241,27 +255,40 @@ export default function AdminSettingsPanel({
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Text Logo</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Text Logo</label>
+                  <span className="text-[9px] font-black uppercase text-red-500">Required</span>
+                </div>
                 <input
                   value={platformTextLogo}
                   onChange={(e) => onSetPlatformTextLogo(e.target.value)}
                   placeholder="LiteQue.com"
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                  className={`w-full ${fieldClass(siteSettingsErrors.platformTextLogo, true)}`}
                 />
+                <p className="text-[10px] text-slate-400">Enter the exact product text you want shown in the platform header. Example: `LiteQue.com`.</p>
+                {siteSettingsErrors.platformTextLogo && <p className="text-[10px] font-bold text-red-500">{siteSettingsErrors.platformTextLogo}</p>}
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Tag Line</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Tag Line</label>
+                  <span className="text-[9px] font-black uppercase text-red-500">Required</span>
+                </div>
                 <input
                   value={platformTagLine}
                   onChange={(e) => onSetPlatformTagLine(e.target.value)}
                   placeholder="Queue Intelligence for Multi-Tenant Operations"
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                  className={`w-full ${fieldClass(siteSettingsErrors.platformTagLine, true)}`}
                 />
+                <p className="text-[10px] text-slate-400">Add the short supporting line that appears below the text logo. Keep it clear and under 120 characters.</p>
+                {siteSettingsErrors.platformTagLine && <p className="text-[10px] font-bold text-red-500">{siteSettingsErrors.platformTagLine}</p>}
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Platform Logo Upload</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Platform Logo Upload</label>
+                  <span className="text-[9px] font-black uppercase text-slate-400">Optional</span>
+                </div>
                 <div className="flex items-center gap-3">
                   {platformLogoPreview ? (
                     <img src={platformLogoPreview} alt="Platform brand logo preview" className="w-14 h-14 rounded-xl object-cover border border-slate-200 bg-white" />
@@ -284,54 +311,71 @@ export default function AdminSettingsPanel({
                     />
                   </label>
                 </div>
-                <p className="text-[10px] text-slate-400">This uploaded image is also used as the browser favicon for the platform.</p>
+                <p className="text-[10px] text-slate-400">This uploaded image is also used as the browser favicon for the platform. Best result: square logo, 512x512 or larger, up to 2048 KB.</p>
+                {siteSettingsErrors.platformLogo && <p className="text-[10px] font-bold text-red-500">{siteSettingsErrors.platformLogo}</p>}
               </div>
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Title Tag</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Title Tag</label>
+                <span className="text-[9px] font-black uppercase text-slate-400">Recommended</span>
+              </div>
               <input
                 value={siteSeoTitle}
                 onChange={(e) => onSetSiteSeoTitle(e.target.value)}
                 placeholder="Smart Queue | Queue Management SaaS for Branches"
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                className={`w-full ${fieldClass(siteSettingsErrors.siteSeoTitle)}`}
               />
               <p className="text-[10px] text-slate-400">Best practice: keep this around 50 to 60 characters and put the primary phrase near the front.</p>
+              {siteSettingsErrors.siteSeoTitle && <p className="text-[10px] font-bold text-red-500">{siteSettingsErrors.siteSeoTitle}</p>}
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Meta Description</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Meta Description</label>
+                <span className="text-[9px] font-black uppercase text-slate-400">Recommended</span>
+              </div>
               <textarea
                 rows={3}
                 value={siteSeoDescription}
                 onChange={(e) => onSetSiteSeoDescription(e.target.value)}
                 placeholder="Real-time queue management, SLA tracking, KPI dashboards, and branch analytics for banks and service teams."
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                className={`w-full ${fieldClass(siteSettingsErrors.siteSeoDescription)}`}
               />
               <p className="text-[10px] text-slate-400">Aim for one clear value proposition in roughly 140 to 160 characters.</p>
+              {siteSettingsErrors.siteSeoDescription && <p className="text-[10px] font-bold text-red-500">{siteSettingsErrors.siteSeoDescription}</p>}
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Keywords</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Keywords</label>
+                <span className="text-[9px] font-black uppercase text-slate-400">Optional</span>
+              </div>
               <input
                 value={siteSeoKeywords}
                 onChange={(e) => onSetSiteSeoKeywords(e.target.value)}
                 placeholder="queue management software, SLA tracking SaaS, branch analytics"
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                className={`w-full ${fieldClass(siteSettingsErrors.siteSeoKeywords)}`}
               />
               <p className="text-[10px] text-slate-400">Use a short comma-separated list of commercial-intent phrases, not a keyword dump.</p>
+              {siteSettingsErrors.siteSeoKeywords && <p className="text-[10px] font-bold text-red-500">{siteSettingsErrors.siteSeoKeywords}</p>}
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Support Email</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Support Email</label>
+                <span className="text-[9px] font-black uppercase text-red-500">Required</span>
+              </div>
               <input
                 type="email"
                 value={supportEmail}
                 onChange={(e) => onSetSupportEmail(e.target.value)}
                 placeholder="support@yourdomain.com"
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                className={`w-full ${fieldClass(siteSettingsErrors.supportEmail)}`}
               />
-              <p className="text-[10px] text-slate-400">This email powers the floating support and feature-request buttons in the landing page and admin panel.</p>
+              <p className="text-[10px] text-slate-400">This email powers the floating support and feature-request buttons in the landing page and admin panel. Use an inbox you actively monitor.</p>
+              {siteSettingsErrors.supportEmail && <p className="text-[10px] font-bold text-red-500">{siteSettingsErrors.supportEmail}</p>}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 space-y-2">

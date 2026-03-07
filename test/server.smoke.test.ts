@@ -83,6 +83,9 @@ async function registerTenant(baseUrl: string, suffix: string) {
   };
 }
 
+const TINY_PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn7l2QAAAAASUVORK5CYII=";
+
 test("role-specific login routes work", async (t) => {
   const runtime = await startTestServer();
   t.after(async () => {
@@ -320,11 +323,13 @@ test("super admin site branding settings round-trip without losing seo fields", 
       supportEmail: "support@liteque.com",
       textLogo: "LiteQue.com",
       tagLine: "Smart Queue Intelligence",
+      logoDataUrl: TINY_PNG_DATA_URL,
     },
   });
   assert.equal(saveSettings.response.status, 200);
   assert.equal(saveSettings.data.textLogo, "LiteQue.com");
   assert.equal(saveSettings.data.tagLine, "Smart Queue Intelligence");
+  assert.match(saveSettings.data.logoUrl, /^\/platform-branding\//);
 
   const publicConfig = await requestJson(runtime.baseUrl, "/api/public/site-config");
   assert.equal(publicConfig.response.status, 200);

@@ -1,5 +1,6 @@
 export interface QueueEntry {
   id: string;
+  tenantId?: string | null;
   name: string;
   branch: string;
   service: string;
@@ -24,6 +25,7 @@ export interface QueueEntry {
 }
 
 export type QueueApiEntry = QueueEntry & {
+  tenant_id?: string | null;
   source_channel?: string | null;
   sla_target_minutes?: number | null;
   first_called_time?: string | null;
