@@ -11,6 +11,9 @@ interface SiteConfig {
   seoDescription: string;
   seoKeywords: string;
   supportEmail: string;
+  starterPrice: number;
+  proPrice: number;
+  freeMonthlyTransactions: number;
 }
 
 const DEFAULT_SITE_CONFIG: SiteConfig = {
@@ -18,7 +21,18 @@ const DEFAULT_SITE_CONFIG: SiteConfig = {
   seoDescription: 'Real-time queue management, SLA tracking, KPI dashboards, and branch analytics for banks, cooperatives, and service teams.',
   seoKeywords: 'queue management software, SLA tracking SaaS, KPI dashboard, branch analytics, banking queue system',
   supportEmail: '',
+  starterPrice: 999,
+  proPrice: 2499,
+  freeMonthlyTransactions: 500,
 };
+
+function formatPeso(amount: number) {
+  return new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
 
 function upsertHeadMeta(attribute: 'name' | 'property', key: string, content: string) {
   let node = document.head.querySelector(`meta[${attribute}="${key}"]`) as HTMLMetaElement | null;
@@ -190,61 +204,64 @@ const FAQ_ITEMS = [
   },
 ];
 
-const PLANS = [
-  {
-    name: 'Free',
-    price: '₱0',
-    period: 'forever',
-    highlight: false,
-    description: 'Perfect for a single-branch pilot or evaluation.',
-    features: [
-      '1 branch',
-      'Real-time queue management',
-      'Basic analytics',
-      'Manual CSV export',
-      'IP whitelist (1 IP)',
-      'Community support',
-    ],
-    cta: 'Get Started Free',
-    ctaStyle: 'border border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white',
-  },
-  {
-    name: 'Starter',
-    price: '₱999',
-    period: 'per month',
-    highlight: true,
-    description: 'Ideal for growing branch networks up to 9 locations.',
-    features: [
-      'Up to 9 branches',
-      'Everything in Free',
-      'Email reports (PDF + CSV)',
-      'Scheduled daily/monthly reports',
-      'Full analytics dashboard',
-      'Unlimited IP whitelist',
-      'Priority email support',
-    ],
-    cta: 'Start Starter Plan',
-    ctaStyle: 'bg-[#003366] text-white hover:bg-[#002244]',
-  },
-  {
-    name: 'Pro',
-    price: '₱2,499',
-    period: 'per month',
-    highlight: false,
-    description: 'Enterprise-grade for multi-tenant deployments.',
-    features: [
-      'Unlimited branches',
-      'Everything in Starter',
-      'Multi-tenant management',
-      'Custom branding per tenant',
-      'Auto-invoice generation',
-      'Longer data retention',
-      'Dedicated account support',
-    ],
-    cta: 'Contact Sales',
-    ctaStyle: 'border border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white',
-  },
-];
+function buildPlans(siteConfig: SiteConfig) {
+  return [
+    {
+      name: 'Free',
+      price: formatPeso(0),
+      period: 'forever',
+      highlight: false,
+      description: 'Perfect for a single-branch pilot or evaluation.',
+      features: [
+        '1 branch',
+        `Up to ${siteConfig.freeMonthlyTransactions.toLocaleString()} transactions per month`,
+        'Real-time queue management',
+        'Basic analytics',
+        'Manual CSV export',
+        'IP whitelist (1 IP)',
+        'Community support',
+      ],
+      cta: 'Get Started Free',
+      ctaStyle: 'border border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white',
+    },
+    {
+      name: 'Starter',
+      price: formatPeso(siteConfig.starterPrice),
+      period: 'per month',
+      highlight: true,
+      description: 'Ideal for growing branch networks up to 9 locations.',
+      features: [
+        'Up to 9 branches',
+        'Everything in Free',
+        'Email reports (PDF + CSV)',
+        'Scheduled daily/monthly reports',
+        'Full analytics dashboard',
+        'Unlimited IP whitelist',
+        'Priority email support',
+      ],
+      cta: 'Start Starter Plan',
+      ctaStyle: 'bg-[#003366] text-white hover:bg-[#002244]',
+    },
+    {
+      name: 'Pro',
+      price: formatPeso(siteConfig.proPrice),
+      period: 'per month',
+      highlight: false,
+      description: 'Enterprise-grade for multi-tenant deployments.',
+      features: [
+        'Unlimited branches',
+        'Everything in Starter',
+        'Multi-tenant management',
+        'Custom branding per tenant',
+        'Auto-invoice generation',
+        'Longer data retention',
+        'Dedicated account support',
+      ],
+      cta: 'Contact Sales',
+      ctaStyle: 'border border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white',
+    },
+  ];
+}
 
 export default function Landing({ onEnterApp }: Props) {
   // Main auth modal
@@ -325,6 +342,9 @@ export default function Landing({ onEnterApp }: Props) {
           seoDescription: data.seoDescription || DEFAULT_SITE_CONFIG.seoDescription,
           seoKeywords: data.seoKeywords || DEFAULT_SITE_CONFIG.seoKeywords,
           supportEmail: data.supportEmail || DEFAULT_SITE_CONFIG.supportEmail,
+          starterPrice: Number.isFinite(Number(data.starterPrice)) ? Number(data.starterPrice) : DEFAULT_SITE_CONFIG.starterPrice,
+          proPrice: Number.isFinite(Number(data.proPrice)) ? Number(data.proPrice) : DEFAULT_SITE_CONFIG.proPrice,
+          freeMonthlyTransactions: Number.isFinite(Number(data.freeMonthlyTransactions)) ? Number(data.freeMonthlyTransactions) : DEFAULT_SITE_CONFIG.freeMonthlyTransactions,
         });
       })
       .catch(() => setSiteConfig(DEFAULT_SITE_CONFIG));
@@ -481,6 +501,8 @@ export default function Landing({ onEnterApp }: Props) {
       setDemoLoading(false);
     }
   };
+
+  const plans = buildPlans(siteConfig);
 
   return (
     <div className="min-h-screen bg-white text-slate-800 overflow-x-hidden">
@@ -776,7 +798,7 @@ export default function Landing({ onEnterApp }: Props) {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
-            {PLANS.map((plan) => (
+            {plans.map((plan) => (
               <motion.div
                 key={plan.name}
                 initial={{ opacity: 0, y: 20 }}

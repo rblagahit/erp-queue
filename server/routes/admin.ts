@@ -59,6 +59,7 @@ export function registerAdminRoutes({
       seoKeywords: 'queue management software, SLA tracking SaaS, KPI dashboard, branch analytics, banking queue system',
       supportEmail: getPrimarySupportEmail(),
     };
+    const billingConfig = helpers.getBillingConfig();
     const row = db.prepare("SELECT value FROM settings WHERE key = 'site_config'").get() as { value?: string } | undefined;
     let parsed: any = {};
     if (row?.value) {
@@ -69,6 +70,9 @@ export function registerAdminRoutes({
       seoDescription: typeof parsed?.seoDescription === 'string' && parsed.seoDescription.trim() ? parsed.seoDescription.trim().slice(0, 200) : defaults.seoDescription,
       seoKeywords: typeof parsed?.seoKeywords === 'string' && parsed.seoKeywords.trim() ? parsed.seoKeywords.trim().slice(0, 240) : defaults.seoKeywords,
       supportEmail: typeof parsed?.supportEmail === 'string' && parsed.supportEmail.trim() ? parsed.supportEmail.trim().slice(0, 160) : defaults.supportEmail,
+      starterPrice: Number.isFinite(Number(billingConfig.starterPrice)) ? Number(billingConfig.starterPrice) : 999,
+      proPrice: Number.isFinite(Number(billingConfig.proPrice)) ? Number(billingConfig.proPrice) : 2499,
+      freeMonthlyTransactions: Number.isFinite(Number(billingConfig.freeMonthlyTransactions)) ? Number(billingConfig.freeMonthlyTransactions) : 500,
     };
   };
 
