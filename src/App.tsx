@@ -53,6 +53,9 @@ interface AppProps {
   loginRole?: 'tenant_admin' | 'super_admin';
 }
 
+type AdminArea = 'overview' | 'access' | 'catalog' | 'kiosk' | 'profile' | 'integrations' | 'subscription' | 'exports' | 'delivery' | 'billing' | 'users' | 'tenants';
+type AdminParentKey = 'operations' | 'administration' | 'insights';
+
 export default function App({ onGoToLanding, initialView = 'teller', loginRole = 'tenant_admin' }: AppProps = {}) {
   const [view, setView] = useState<'client' | 'teller' | 'display' | 'analytics' | 'admin'>(initialView);
   const [queue, setQueue] = useState<QueueEntry[]>([]);
@@ -131,7 +134,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [catalogBranchesText, setCatalogBranchesText] = useState('');
   const [catalogServicesText, setCatalogServicesText] = useState('');
   const [catalogSaving, setCatalogSaving] = useState(false);
-  const [adminArea, setAdminArea] = useState<'overview' | 'operations' | 'reports' | 'settings' | 'platform'>('overview');
+  const [adminArea, setAdminArea] = useState<AdminArea>('overview');
   const [companyName, setCompanyName] = useState('');
   const [industry, setIndustry] = useState('');
   const [contactEmail, setContactEmail] = useState('');
@@ -1533,6 +1536,156 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     return [setupChecklist.profileDone, setupChecklist.operationsDone, setupChecklist.configDone].filter(Boolean).length;
   }, [setupChecklist]);
 
+  const adminTabGroups = useMemo(() => {
+    const groups: Array<{
+      key: AdminParentKey;
+      label: string;
+      description: string;
+      children: Array<{
+        key: AdminArea;
+        label: string;
+        desc: string;
+        badge: string;
+      }>;
+    }> = [
+      {
+        key: 'operations',
+        label: 'Operations',
+        description: 'Queue setup, network access, and check-in controls',
+        children: [
+          {
+            key: 'overview',
+            label: 'Overview',
+            desc: 'Setup progress, live SLA pulse, and today health',
+            badge: `${setupCompletionCount}/3 set`,
+          },
+          {
+            key: 'access',
+            label: 'Queue Access',
+            desc: 'Whitelist branches and trusted network devices',
+            badge: `${ipList.length} IP${ipList.length === 1 ? '' : 's'}`,
+          },
+          {
+            key: 'catalog',
+            label: 'Catalog',
+            desc: 'Maintain branches, services, and customer language',
+            badge: `${branches.length} branches`,
+          },
+          {
+            key: 'kiosk',
+            label: 'Kiosk QR',
+            desc: 'Prepare touchless entry links by branch and service',
+            badge: `${services.length} services`,
+          },
+        ],
+      },
+      {
+        key: 'administration',
+        label: 'Administration',
+        description: 'Identity, integrations, and admin-only controls',
+        children: [
+          {
+            key: 'profile',
+            label: 'Profile',
+            desc: 'Branding, contact details, and company identity',
+            badge: companyName.trim() ? 'Ready' : 'Pending',
+          },
+          {
+            key: 'integrations',
+            label: 'Integrations',
+            desc: 'Manage the Google API key and secure tooling access',
+            badge: apiKey ? 'Key set' : 'No key',
+          },
+          ...(currentUserRole === 'super_admin'
+            ? [
+                {
+                  key: 'users' as AdminArea,
+                  label: 'Users',
+                  desc: 'Update roles and maintain platform user access',
+                  badge: `${adminUsers.length} users`,
+                },
+                {
+                  key: 'tenants' as AdminArea,
+                  label: 'Tenants',
+                  desc: 'Review tenant plans, names, and workspace ownership',
+                  badge: `${adminTenants.length} tenants`,
+                },
+              ]
+            : []),
+        ],
+      },
+      {
+        key: 'insights',
+        label: 'Insights & Billing',
+        description: 'Exports, report delivery, and subscription actions',
+        children: [
+          {
+            key: 'exports',
+            label: 'Exports',
+            desc: 'Download KPI and queue history with scoped filters',
+            badge: exportFrom || exportTo || exportBranch !== 'All' ? 'Filtered' : 'All data',
+          },
+          {
+            key: 'delivery',
+            label: 'Email Reports',
+            desc: 'Configure SMTP and schedule automated reporting',
+            badge: smtpHost.trim() ? 'SMTP ready' : 'SMTP pending',
+          },
+          ...(currentUserRole === 'super_admin'
+            ? [
+                {
+                  key: 'billing' as AdminArea,
+                  label: 'Billing Config',
+                  desc: 'Control payment rails, QR, and grace periods',
+                  badge: `${billingSubmissions.length} pending`,
+                },
+              ]
+            : [
+                {
+                  key: 'subscription' as AdminArea,
+                  label: 'Subscription',
+                  desc: 'Submit payment proof and review billing details',
+                  badge: billingMe?.billing?.bankName ? 'Ready' : 'Pending',
+                },
+              ]),
+        ],
+      },
+    ];
+
+    return groups;
+  }, [
+    setupCompletionCount,
+    ipList.length,
+    branches.length,
+    services.length,
+    companyName,
+    apiKey,
+    currentUserRole,
+    adminUsers.length,
+    adminTenants.length,
+    exportFrom,
+    exportTo,
+    exportBranch,
+    smtpHost,
+    billingSubmissions.length,
+    billingMe,
+  ]);
+
+  const activeAdminGroup = adminTabGroups.find((group) => group.children.some((child) => child.key === adminArea)) ?? adminTabGroups[0];
+  const activeAdminChild = activeAdminGroup.children.find((child) => child.key === adminArea) ?? activeAdminGroup.children[0];
+
+  useEffect(() => {
+    const isValid = adminTabGroups.some((group) => group.children.some((child) => child.key === adminArea));
+    if (!isValid && adminTabGroups[0]) {
+      setAdminArea(adminTabGroups[0].children[0].key);
+    }
+  }, [adminArea, adminTabGroups]);
+
+  const selectAdminParent = (parentKey: AdminParentKey) => {
+    const targetGroup = adminTabGroups.find((group) => group.key === parentKey);
+    if (targetGroup) setAdminArea(targetGroup.children[0].key);
+  };
+
   const formatDuration = (ms: number) => {
     const totalSeconds = Math.max(0, Math.floor(ms / 1000));
     return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
@@ -1962,7 +2115,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     <div>
                       <h2 className="text-2xl font-extrabold text-[#003366]">Admin Control Center</h2>
                       <p className="text-xs text-slate-400 font-medium">
-                        Overview · Operations · Reports · Settings
+                        Parent tabs and child tabs keep admin workflows grouped and easier to scan.
                         {currentUserRole === 'super_admin' && <span className="ml-2 text-amber-500 font-black">· Super Admin</span>}
                       </p>
                     </div>
@@ -2013,69 +2166,62 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     </div>
                   </div>
 
-                  <div className="white-card rounded-2xl p-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                    {[
-                      {
-                        key: 'overview',
-                        label: 'Overview',
-                        desc: currentUserRole === 'super_admin' ? 'Health, setup, billing pulse' : 'Health, setup, subscription pulse',
-                        badge: `${setupCompletionCount}/3 set`,
-                      },
-                      {
-                        key: 'operations',
-                        label: 'Operations',
-                        desc: 'Branches, services, kiosk, IP controls',
-                        badge: `${branches.length} branches`,
-                      },
-                      {
-                        key: 'reports',
-                        label: 'Reports',
-                        desc: 'Exports, SMTP, scheduled reporting',
-                        badge: smtpHost.trim() ? 'SMTP ready' : 'SMTP pending',
-                      },
-                      {
-                        key: 'settings',
-                        label: 'Settings',
-                        desc: 'Brand, identity, account-level tools',
-                        badge: companyName.trim() ? 'Profile set' : 'Profile pending',
-                      },
-                      ...(currentUserRole === 'super_admin'
-                        ? [{
-                            key: 'platform',
-                            label: 'Platform',
-                            desc: 'Billing config, users, tenants',
-                            badge: `${billingSubmissions.length} pending`,
-                          }]
-                        : []),
-                    ].map((item) => (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => setAdminArea(item.key as 'overview' | 'operations' | 'reports' | 'settings' | 'platform')}
-                        className={cn(
-                          "rounded-2xl border px-4 py-4 text-left transition-all",
-                          adminArea === item.key
-                            ? "border-[#003366] bg-[#003366] text-white shadow-lg shadow-blue-900/15"
-                            : "border-slate-200 bg-white text-slate-600 hover:border-amber-300 hover:bg-amber-50/40"
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-xs font-black uppercase tracking-[0.2em]">{item.label}</p>
-                          <span className={cn(
-                            "rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-widest",
-                            adminArea === item.key ? "bg-white/15 text-white" : "bg-slate-100 text-slate-500"
-                          )}>
-                            {item.badge}
-                          </span>
-                        </div>
-                        <p className={cn(
-                          "mt-2 text-[11px] leading-relaxed",
-                          adminArea === item.key ? "text-white/75" : "text-slate-400"
-                        )}>
-                          {item.desc}
-                        </p>
-                      </button>
-                    ))}
+                  <div className="white-card rounded-[28px] border border-slate-200/80 p-4 md:p-5 space-y-4 shadow-sm shadow-slate-200/40">
+                    <div className="flex flex-wrap gap-3">
+                      {adminTabGroups.map((group) => {
+                        const isActive = activeAdminGroup.key === group.key;
+                        return (
+                          <button
+                            key={group.key}
+                            type="button"
+                            onClick={() => selectAdminParent(group.key)}
+                            className={cn(
+                              "rounded-2xl border px-5 py-3 text-left transition-all min-w-[11rem]",
+                              isActive
+                                ? "border-blue-200 bg-blue-50 text-[#2553d9] shadow-sm shadow-blue-100/70"
+                                : "border-slate-200 bg-slate-50/80 text-slate-500 hover:border-slate-300 hover:bg-white hover:text-[#003366]"
+                            )}
+                          >
+                            <p className="text-[11px] font-black uppercase tracking-[0.18em]">{group.label}</p>
+                            <p className="mt-1 text-[11px] leading-relaxed text-inherit/70">{group.description}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="border-b border-slate-200 px-1">
+                      <div className="flex flex-wrap items-end gap-2 md:gap-4">
+                        {activeAdminGroup.children.map((child) => {
+                          const isActive = adminArea === child.key;
+                          return (
+                            <button
+                              key={child.key}
+                              type="button"
+                              onClick={() => setAdminArea(child.key)}
+                              className={cn(
+                                "px-4 py-3 text-sm font-bold transition-colors border-b-[3px]",
+                                isActive
+                                  ? "border-[#2553d9] text-[#2553d9]"
+                                  : "border-transparent text-slate-400 hover:text-[#003366]"
+                              )}
+                            >
+                              {child.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="px-2 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.28em]">{activeAdminGroup.label}</p>
+                        <h3 className="mt-1 text-xl font-extrabold text-[#003366]">{activeAdminChild.label}</h3>
+                        <p className="mt-1 text-sm text-slate-500 max-w-2xl">{activeAdminChild.desc}</p>
+                      </div>
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                        {activeAdminChild.badge}
+                      </span>
+                    </div>
                   </div>
 
                   {adminArea === 'overview' && (
@@ -2088,7 +2234,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                         billingMe={billingMe}
                         billingReviewBusy={billingReviewBusy}
                         kpiSnapshot={kpiSnapshot}
-                        onOpenOperations={() => setAdminArea('operations')}
+                        onOpenOperations={() => setAdminArea('access')}
                         onRefreshBillingSubmissions={() => { void loadBillingSubmissions(); }}
                         onConfirmPaymentSubmission={confirmPaymentSubmission}
                         onRejectPaymentSubmission={rejectPaymentSubmission}
@@ -2096,12 +2242,11 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     </Suspense>
                   )}
 
-                  {adminArea !== 'overview' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-                    {adminArea === 'operations' && (
+                  {(adminArea === 'access' || adminArea === 'catalog' || adminArea === 'kiosk') && (
+                    <div className="grid grid-cols-1 gap-6">
                       <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading operations…</div>}>
                         <AdminOperationsPanel
+                          activeSection={adminArea as 'access' | 'catalog' | 'kiosk'}
                           ipList={ipList}
                           confirmRemoveIP={confirmRemoveIP}
                           newIP={newIP}
@@ -2140,11 +2285,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           }}
                         />
                       </Suspense>
-                    )}
+                    </div>
+                  )}
 
-                    {adminArea === 'reports' && (
+                  {(adminArea === 'exports' || adminArea === 'delivery') && (
+                    <div className="grid grid-cols-1 gap-6">
                       <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading reports…</div>}>
                         <AdminReportsPanel
+                          activeSection={adminArea as 'exports' | 'delivery'}
                           exportBranch={exportBranch}
                           exportFrom={exportFrom}
                           exportTo={exportTo}
@@ -2177,11 +2325,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           onSendTestReport={sendTestReport}
                         />
                       </Suspense>
-                    )}
+                    </div>
+                  )}
 
-                    {adminArea === 'settings' && (
+                  {(adminArea === 'profile' || adminArea === 'integrations' || adminArea === 'subscription') && (
+                    <div className="grid grid-cols-1 gap-6">
                       <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading settings…</div>}>
                         <AdminSettingsPanel
+                          activeSection={adminArea as 'profile' | 'integrations' | 'subscription'}
                           currentUserRole={currentUserRole}
                           companyName={companyName}
                           industry={industry}
@@ -2218,11 +2369,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           onSetPaymentProofDataUrl={setPaymentProofDataUrl}
                         />
                       </Suspense>
-                    )}
+                    </div>
+                  )}
 
-                    {adminArea === 'platform' && currentUserRole === 'super_admin' && (
+                  {(adminArea === 'billing' || adminArea === 'users' || adminArea === 'tenants') && currentUserRole === 'super_admin' && (
+                    <div className="grid grid-cols-1 gap-6">
                       <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading platform tools…</div>}>
                         <AdminPlatformPanel
+                          activeSection={adminArea as 'billing' | 'users' | 'tenants'}
                           billingSettings={billingSettings}
                           billingQrDataUrl={billingQrDataUrl}
                           billingSettingsSaving={billingSettingsSaving}
@@ -2248,9 +2402,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           onSetConfirmDeleteTenant={setConfirmDeleteTenant}
                         />
                       </Suspense>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  )}
+
               </div>
             )}
             </motion.section>

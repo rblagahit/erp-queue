@@ -1,8 +1,10 @@
 import type { ChangeEvent, FormEvent } from 'react';
 
 type BillingMe = any;
+type SettingsSection = 'profile' | 'integrations' | 'subscription';
 
 type AdminSettingsPanelProps = {
+  activeSection: SettingsSection;
   currentUserRole: string | null;
   companyName: string;
   industry: string;
@@ -40,6 +42,7 @@ type AdminSettingsPanelProps = {
 };
 
 export default function AdminSettingsPanel({
+  activeSection,
   currentUserRole,
   companyName,
   industry,
@@ -77,118 +80,122 @@ export default function AdminSettingsPanel({
 }: AdminSettingsPanelProps) {
   return (
     <>
-      <div className="white-card rounded-2xl p-6 space-y-5">
-        <div className="border-b pb-3">
-          <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Company Profile</h4>
-          <p className="text-[10px] text-slate-400 mt-0.5">Set your organization identity and contact details.</p>
-        </div>
-        <form onSubmit={onSaveProfile} className="space-y-3">
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Logo</label>
-            <div className="flex items-center gap-3">
-              {companyLogoUrl ? (
-                <img src={companyLogoUrl} alt="Company logo" className="w-14 h-14 rounded-lg object-cover border border-slate-200 bg-white" />
-              ) : (
-                <div className="w-14 h-14 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase">
-                  No Logo
-                </div>
-              )}
-              <label className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
-                {logoUploading ? 'Uploading…' : 'Upload Logo'}
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) onUploadCompanyLogo(file);
-                    e.currentTarget.value = '';
-                  }}
-                />
-              </label>
-            </div>
+      {activeSection === 'profile' && (
+        <div className="white-card rounded-2xl p-6 space-y-5">
+          <div className="border-b pb-3">
+            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Company Profile</h4>
+            <p className="text-[10px] text-slate-400 mt-0.5">Set your organization identity and contact details.</p>
           </div>
-
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Name</label>
-            <input value={companyName} onChange={(e) => onSetCompanyName(e.target.value)} placeholder="Acme Cooperative" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Industry</label>
-            <input value={industry} onChange={(e) => onSetIndustry(e.target.value)} placeholder="Banking, Hospital, Government..." className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+          <form onSubmit={onSaveProfile} className="space-y-3">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contact Email</label>
-              <input type="email" value={contactEmail} onChange={(e) => onSetContactEmail(e.target.value)} placeholder="ops@company.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Logo</label>
+              <div className="flex items-center gap-3">
+                {companyLogoUrl ? (
+                  <img src={companyLogoUrl} alt="Company logo" className="w-14 h-14 rounded-lg object-cover border border-slate-200 bg-white" />
+                ) : (
+                  <div className="w-14 h-14 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase">
+                    No Logo
+                  </div>
+                )}
+                <label className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer">
+                  {logoUploading ? 'Uploading…' : 'Upload Logo'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) onUploadCompanyLogo(file);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Company Name</label>
+              <input value={companyName} onChange={(e) => onSetCompanyName(e.target.value)} placeholder="Acme Cooperative" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contact Number</label>
-              <input value={contactPhone} onChange={(e) => onSetContactPhone(e.target.value)} placeholder="+63 912 345 6789" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Industry</label>
+              <input value={industry} onChange={(e) => onSetIndustry(e.target.value)} placeholder="Banking, Hospital, Government..." className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
             </div>
-          </div>
-          <button type="submit" disabled={profileSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
-            {profileSaving ? 'Saving…' : 'Save Company Profile'}
-          </button>
-        </form>
-      </div>
-
-      <div className="white-card rounded-2xl p-6 space-y-5">
-        <div className="border-b pb-3">
-          <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Google API Key</h4>
-          <p className="text-[10px] text-slate-400 mt-0.5">Update the Google API key used by the system. The key is stored securely and never returned in full.</p>
-        </div>
-
-        {apiKey && (
-          <div className="flex items-center justify-between bg-green-50 border border-green-100 rounded-xl px-4 py-3">
-            <div>
-              <p className="text-[10px] font-bold text-green-700 uppercase">Key Configured</p>
-              <p className="text-xs text-green-600 font-mono mt-0.5">{apiKey}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contact Email</label>
+                <input type="email" value={contactEmail} onChange={(e) => onSetContactEmail(e.target.value)} placeholder="ops@company.com" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Contact Number</label>
+                <input value={contactPhone} onChange={(e) => onSetContactPhone(e.target.value)} placeholder="+63 912 345 6789" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={onRemoveApiKey}
-              className="text-[9px] font-black uppercase text-red-400 border border-red-200 px-2 py-1 rounded-md hover:bg-red-50 transition-colors ml-4 shrink-0"
-            >
-              Remove
+            <button type="submit" disabled={profileSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
+              {profileSaving ? 'Saving…' : 'Save Company Profile'}
             </button>
-          </div>
-        )}
+          </form>
+        </div>
+      )}
 
-        <form onSubmit={onSaveApiKey} className="space-y-3">
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
-              {apiKey ? 'Replace Key' : 'API Key'}
-            </label>
-            <div className="flex gap-2">
-              <input
-                type={showApiKey ? 'text' : 'password'}
-                value={apiKeyInput}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => onSetApiKeyInput(e.target.value)}
-                placeholder={apiKey ? 'Paste new key to replace...' : 'AIza...'}
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none font-mono focus:ring-2 focus:ring-amber-400 transition-all"
-              />
+      {activeSection === 'integrations' && (
+        <div className="white-card rounded-2xl p-6 space-y-5">
+          <div className="border-b pb-3">
+            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Google API Key</h4>
+            <p className="text-[10px] text-slate-400 mt-0.5">Update the Google API key used by the system. The key is stored securely and never returned in full.</p>
+          </div>
+
+          {apiKey && (
+            <div className="flex items-center justify-between bg-green-50 border border-green-100 rounded-xl px-4 py-3">
+              <div>
+                <p className="text-[10px] font-bold text-green-700 uppercase">Key Configured</p>
+                <p className="text-xs text-green-600 font-mono mt-0.5">{apiKey}</p>
+              </div>
               <button
                 type="button"
-                onClick={() => onSetShowApiKey(!showApiKey)}
-                className="text-[10px] font-bold text-slate-500 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap"
+                onClick={onRemoveApiKey}
+                className="text-[9px] font-black uppercase text-red-400 border border-red-200 px-2 py-1 rounded-md hover:bg-red-50 transition-colors ml-4 shrink-0"
               >
-                {showApiKey ? 'Hide' : 'Show'}
+                Remove
               </button>
             </div>
-          </div>
-          <button
-            type="submit"
-            disabled={!apiKeyInput.trim()}
-            className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {apiKey ? 'Update API Key' : 'Save API Key'}
-          </button>
-        </form>
-      </div>
+          )}
 
-      {currentUserRole !== 'super_admin' && (
-        <div className="white-card rounded-2xl p-6 space-y-5 md:col-span-2">
+          <form onSubmit={onSaveApiKey} className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                {apiKey ? 'Replace Key' : 'API Key'}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type={showApiKey ? 'text' : 'password'}
+                  value={apiKeyInput}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => onSetApiKeyInput(e.target.value)}
+                  placeholder={apiKey ? 'Paste new key to replace...' : 'AIza...'}
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none font-mono focus:ring-2 focus:ring-amber-400 transition-all"
+                />
+                <button
+                  type="button"
+                  onClick={() => onSetShowApiKey(!showApiKey)}
+                  className="text-[10px] font-bold text-slate-500 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap"
+                >
+                  {showApiKey ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={!apiKeyInput.trim()}
+              className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {apiKey ? 'Update API Key' : 'Save API Key'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {activeSection === 'subscription' && currentUserRole !== 'super_admin' && (
+        <div className="white-card rounded-2xl p-6 space-y-5">
           <div className="border-b pb-3">
             <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Subscription & Payment</h4>
             <p className="text-[10px] text-slate-400 mt-0.5">Submit your payment proof for plan activation.</p>
