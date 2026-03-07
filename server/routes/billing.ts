@@ -30,7 +30,8 @@ export function registerBillingRoutes({
         contactEmail: settings?.contact_email || "",
       },
       subscription: subscription || null,
-      pricing: config.planPrices,
+      pricing: helpers.getPlanPricing(),
+      usage: helpers.getMonthlyTransactionUsage(dbUser.tenant_id),
       billing,
       submissions: recentSubmissions,
     });
@@ -91,6 +92,9 @@ export function registerBillingRoutes({
       accountNumber: typeof req.body?.accountNumber === "string" ? req.body.accountNumber.trim().slice(0, 160) : current.accountNumber,
       instructions: typeof req.body?.instructions === "string" ? req.body.instructions.trim().slice(0, 1000) : current.instructions,
       graceDays: Number.isFinite(Number(req.body?.graceDays)) ? Math.max(1, Math.min(30, Number(req.body.graceDays))) : current.graceDays,
+      starterPrice: Number.isFinite(Number(req.body?.starterPrice)) ? Math.max(0, Number(req.body.starterPrice)) : current.starterPrice,
+      proPrice: Number.isFinite(Number(req.body?.proPrice)) ? Math.max(0, Number(req.body.proPrice)) : current.proPrice,
+      freeMonthlyTransactions: Number.isFinite(Number(req.body?.freeMonthlyTransactions)) ? Math.max(1, Math.min(50000, Number(req.body.freeMonthlyTransactions))) : current.freeMonthlyTransactions,
     };
 
     const qrDataUrl = typeof req.body?.qrDataUrl === "string" ? req.body.qrDataUrl : "";

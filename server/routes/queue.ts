@@ -43,6 +43,16 @@ export function registerQueueRoutes({
     }
     helpers.ensureTenantCatalog(tenantId);
     const catalog = helpers.getTenantCatalog(tenantId);
+    if ((catalog.plan || 'free').toLowerCase() === 'free') {
+      const usage = helpers.getMonthlyTransactionUsage(tenantId);
+      if (usage.count >= usage.limit) {
+        return res.status(403).json({
+          error: `Free tier monthly transaction limit reached (${usage.limit}). Upgrade to continue accepting new queue entries.`,
+          code: 'FREE_TIER_LIMIT_REACHED',
+          usage,
+        });
+      }
+    }
     if (!catalog.branches.includes(entry.branch)) {
       return res.status(400).json({ error: "Invalid branch for this tenant" });
     }

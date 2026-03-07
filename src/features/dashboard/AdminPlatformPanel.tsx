@@ -61,7 +61,7 @@ export default function AdminPlatformPanel({
         <div className="white-card rounded-2xl p-6 space-y-5">
           <div className="border-b pb-3">
             <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Billing Configuration</h4>
-            <p className="text-[10px] text-slate-400 mt-0.5">Set bank details, payment QR, and grace days for auto-downgrade.</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Set bank details, editable paid-tier pricing, the free-tier monthly transaction cap, and grace days for auto-downgrade.</p>
           </div>
           <form onSubmit={onSaveBillingSettings} className="space-y-3">
             <div className="space-y-1">
@@ -82,9 +82,25 @@ export default function AdminPlatformPanel({
               <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Instructions</label>
               <textarea rows={3} value={billingSettings.instructions || ''} onChange={(e) => onSetBillingSettings((prev: any) => ({ ...prev, instructions: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Grace Days</label>
+                <input type="number" min={1} max={30} value={billingSettings.graceDays ?? 5} onChange={(e) => onSetBillingSettings((prev: any) => ({ ...prev, graceDays: Number(e.target.value) }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Starter Price (PHP)</label>
+                <input type="number" min={0} step="1" value={billingSettings.starterPrice ?? 999} onChange={(e) => onSetBillingSettings((prev: any) => ({ ...prev, starterPrice: Number(e.target.value) }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Pro Price (PHP)</label>
+                <input type="number" min={0} step="1" value={billingSettings.proPrice ?? 2499} onChange={(e) => onSetBillingSettings((prev: any) => ({ ...prev, proPrice: Number(e.target.value) }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              </div>
+            </div>
+
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Grace Days</label>
-              <input type="number" min={1} max={30} value={billingSettings.graceDays ?? 5} onChange={(e) => onSetBillingSettings((prev: any) => ({ ...prev, graceDays: Number(e.target.value) }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Free Tier Monthly Transactions</label>
+              <input type="number" min={1} max={50000} value={billingSettings.freeMonthlyTransactions ?? 500} onChange={(e) => onSetBillingSettings((prev: any) => ({ ...prev, freeMonthlyTransactions: Number(e.target.value) }))} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+              <p className="text-[10px] text-slate-400">Free plans stop accepting new queue entries once they hit this count for the current month. The count refreshes automatically every new month.</p>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Payment QR Code</label>

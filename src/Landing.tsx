@@ -6,6 +6,48 @@ interface Props {
   onEnterApp: (token?: string) => void;
 }
 
+interface SiteConfig {
+  seoTitle: string;
+  seoDescription: string;
+  seoKeywords: string;
+  supportEmail: string;
+}
+
+const DEFAULT_SITE_CONFIG: SiteConfig = {
+  seoTitle: 'Smart Queue | Enterprise Queue & Analytics',
+  seoDescription: 'Real-time queue management, SLA tracking, KPI dashboards, and branch analytics for banks, cooperatives, and service teams.',
+  seoKeywords: 'queue management software, SLA tracking SaaS, KPI dashboard, branch analytics, banking queue system',
+  supportEmail: '',
+};
+
+function upsertHeadMeta(attribute: 'name' | 'property', key: string, content: string) {
+  let node = document.head.querySelector(`meta[${attribute}="${key}"]`) as HTMLMetaElement | null;
+  if (!node) {
+    node = document.createElement('meta');
+    node.setAttribute(attribute, key);
+    document.head.appendChild(node);
+  }
+  node.setAttribute('content', content);
+}
+
+function applySiteMetadata(siteConfig: SiteConfig) {
+  document.title = siteConfig.seoTitle || DEFAULT_SITE_CONFIG.seoTitle;
+  upsertHeadMeta('name', 'description', siteConfig.seoDescription || DEFAULT_SITE_CONFIG.seoDescription);
+  upsertHeadMeta('name', 'keywords', siteConfig.seoKeywords || DEFAULT_SITE_CONFIG.seoKeywords);
+  upsertHeadMeta('property', 'og:title', siteConfig.seoTitle || DEFAULT_SITE_CONFIG.seoTitle);
+  upsertHeadMeta('property', 'og:description', siteConfig.seoDescription || DEFAULT_SITE_CONFIG.seoDescription);
+  upsertHeadMeta('name', 'twitter:title', siteConfig.seoTitle || DEFAULT_SITE_CONFIG.seoTitle);
+  upsertHeadMeta('name', 'twitter:description', siteConfig.seoDescription || DEFAULT_SITE_CONFIG.seoDescription);
+  upsertHeadMeta('property', 'og:url', window.location.origin + '/');
+  let canonical = document.head.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+  if (!canonical) {
+    canonical = document.createElement('link');
+    canonical.rel = 'canonical';
+    document.head.appendChild(canonical);
+  }
+  canonical.href = window.location.origin + '/';
+}
+
 const FEATURES = [
   {
     icon: (
@@ -243,6 +285,7 @@ export default function Landing({ onEnterApp }: Props) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [liveStats, setLiveStats] = useState<{ totalTransactions: number; totalTenants: number; avgWaitMinutes: number | null } | null>(null);
   const [faqOpen, setFaqOpen] = useState<number | null>(null);
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(DEFAULT_SITE_CONFIG);
 
   // Fetch public live stats for hero section
   useEffect(() => {
@@ -272,6 +315,24 @@ export default function Landing({ onEnterApp }: Props) {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    fetch('/api/public/site-config')
+      .then(async (res) => (res.ok ? res.json() : DEFAULT_SITE_CONFIG))
+      .then((data: Partial<SiteConfig>) => {
+        setSiteConfig({
+          seoTitle: data.seoTitle || DEFAULT_SITE_CONFIG.seoTitle,
+          seoDescription: data.seoDescription || DEFAULT_SITE_CONFIG.seoDescription,
+          seoKeywords: data.seoKeywords || DEFAULT_SITE_CONFIG.seoKeywords,
+          supportEmail: data.supportEmail || DEFAULT_SITE_CONFIG.supportEmail,
+        });
+      })
+      .catch(() => setSiteConfig(DEFAULT_SITE_CONFIG));
+  }, []);
+
+  useEffect(() => {
+    applySiteMetadata(siteConfig);
+  }, [siteConfig]);
 
   // Scroll lock when any modal is open
   useEffect(() => {
@@ -1262,6 +1323,23 @@ export default function Landing({ onEnterApp }: Props) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {siteConfig.supportEmail && (
+        <a
+          href={`mailto:${siteConfig.supportEmail}?subject=${encodeURIComponent('Smart Queue support or feature request')}`}
+          className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-3 rounded-full bg-[#003366] px-5 py-3 text-white shadow-2xl shadow-blue-900/20 transition-all hover:-translate-y-0.5 hover:bg-[#002244]"
+        >
+          <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4l-4 4v-4z" />
+            </svg>
+          </span>
+          <span className="text-left">
+            <span className="block text-[10px] font-black uppercase tracking-[0.2em] text-blue-100">Need Help?</span>
+            <span className="block text-sm font-bold">Contact Support</span>
+          </span>
+        </a>
+      )}
     </div>
   );
 }

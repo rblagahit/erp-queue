@@ -46,6 +46,64 @@ export function registerAdminRoutes({
     });
   });
 
+
+  const getPrimarySupportEmail = () => {
+    const seededAdmin = db.prepare("SELECT email FROM users WHERE role = 'super_admin' ORDER BY createdAt ASC LIMIT 1").get() as { email?: string } | undefined;
+    return (process.env.ADMIN_EMAIL || seededAdmin?.email || 'admin@example.com').trim();
+  };
+
+  const getSiteConfig = () => {
+    const defaults = {
+      seoTitle: 'Smart Queue | Enterprise Queue & Analytics',
+      seoDescription: 'Real-time queue management, SLA tracking, KPI dashboards, and branch analytics for banks, cooperatives, and service teams.',
+      seoKeywords: 'queue management software, SLA tracking SaaS, KPI dashboard, branch analytics, banking queue system',
+      supportEmail: getPrimarySupportEmail(),
+    };
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'site_config'").get() as { value?: string } | undefined;
+    let parsed: any = {};
+    if (row?.value) {
+      try { parsed = JSON.parse(row.value); } catch { parsed = {}; }
+    }
+    return {
+      seoTitle: typeof parsed?.seoTitle === 'string' && parsed.seoTitle.trim() ? parsed.seoTitle.trim().slice(0, 80) : defaults.seoTitle,
+      seoDescription: typeof parsed?.seoDescription === 'string' && parsed.seoDescription.trim() ? parsed.seoDescription.trim().slice(0, 200) : defaults.seoDescription,
+      seoKeywords: typeof parsed?.seoKeywords === 'string' && parsed.seoKeywords.trim() ? parsed.seoKeywords.trim().slice(0, 240) : defaults.seoKeywords,
+      supportEmail: typeof parsed?.supportEmail === 'string' && parsed.supportEmail.trim() ? parsed.supportEmail.trim().slice(0, 160) : defaults.supportEmail,
+    };
+  };
+
+  app.get('/api/public/site-config', (_req, res) => {
+    res.json(getSiteConfig());
+  });
+
+  app.get('/api/admin/settings/site', helpers.requireSuperAdmin, (_req, res) => {
+    res.json(getSiteConfig());
+  });
+
+  app.post('/api/admin/settings/site', helpers.requireSuperAdmin, (req, res) => {
+    const current = getSiteConfig();
+    const seoTitle = typeof req.body?.seoTitle === 'string' && req.body.seoTitle.trim()
+      ? req.body.seoTitle.trim().slice(0, 80)
+      : current.seoTitle;
+    const seoDescription = typeof req.body?.seoDescription === 'string' && req.body.seoDescription.trim()
+      ? req.body.seoDescription.trim().slice(0, 200)
+      : current.seoDescription;
+    const seoKeywords = typeof req.body?.seoKeywords === 'string' && req.body.seoKeywords.trim()
+      ? req.body.seoKeywords.trim().slice(0, 240)
+      : current.seoKeywords;
+    const supportEmail = typeof req.body?.supportEmail === 'string' && req.body.supportEmail.trim()
+      ? req.body.supportEmail.trim().slice(0, 160)
+      : getPrimarySupportEmail();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail)) {
+      return res.status(400).json({ error: 'Support email must be a valid email address' });
+    }
+
+    const nextConfig = { seoTitle, seoDescription, seoKeywords, supportEmail };
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('site_config', ?)").run(JSON.stringify(nextConfig));
+    res.json(nextConfig);
+  });
+
   app.get("/api/admin/ips", helpers.requireAdmin, (_req, res) => {
     const rows = db.prepare("SELECT * FROM ip_whitelist ORDER BY addedAt DESC").all();
     res.json(rows);

@@ -58,6 +58,7 @@ const PLAN_PRICES: Record<string, number> = {
   starter: 999,
   pro: 2499,
 };
+const FREE_MONTHLY_TRANSACTION_LIMIT = 500;
 const isDev = process.env.NODE_ENV === "development";
 
 export async function createSmartQueueServer(options: CreateAppOptions = {}) {
@@ -441,9 +442,45 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
     return PLAN_LIMITS[plan] || PLAN_LIMITS.free;
   };
 
+  const getPlanPricing = () => {
+    const billing = getBillingConfig();
+    return {
+      free: 0,
+      starter: Number.isFinite(Number(billing?.starterPrice)) ? Math.max(0, Number(billing.starterPrice)) : PLAN_PRICES.starter,
+      pro: Number.isFinite(Number(billing?.proPrice)) ? Math.max(0, Number(billing.proPrice)) : PLAN_PRICES.pro,
+      freeMonthlyTransactions: Number.isFinite(Number(billing?.freeMonthlyTransactions))
+        ? Math.max(1, Math.min(50000, Number(billing.freeMonthlyTransactions)))
+        : FREE_MONTHLY_TRANSACTION_LIMIT,
+    };
+  };
+
   const getPlanPrice = (planRaw?: string) => {
     const plan = (planRaw || "free").toLowerCase();
-    return PLAN_PRICES[plan] ?? 0;
+    const pricing = getPlanPricing();
+    return pricing[plan as keyof typeof pricing] ?? 0;
+  };
+
+  const getMonthlyTransactionUsage = (tenantId: string, referenceDate = new Date()) => {
+    const pricing = getPlanPricing();
+    const start = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
+    const end = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 1);
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
+    const queueCount = (db.prepare(
+      "SELECT COUNT(*) as c FROM queue WHERE tenant_id = ? AND checkInTime >= ? AND checkInTime < ?"
+    ).get(tenantId, startIso, endIso) as any).c as number;
+    const historyCount = (db.prepare(
+      "SELECT COUNT(*) as c FROM history WHERE tenant_id = ? AND checkInTime >= ? AND checkInTime < ?"
+    ).get(tenantId, startIso, endIso) as any).c as number;
+    const count = Number(queueCount || 0) + Number(historyCount || 0);
+    const limit = pricing.freeMonthlyTransactions;
+    return {
+      count,
+      limit,
+      remaining: Math.max(0, limit - count),
+      periodStart: startIso,
+      periodEnd: endIso,
+    };
   };
 
   const normalizeSourceChannel = (value: unknown) => {
@@ -492,6 +529,9 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
       instructions: parsed?.instructions || "",
       qrUrl: parsed?.qrUrl || "",
       graceDays: Number.isFinite(parsed?.graceDays) ? Number(parsed.graceDays) : 5,
+      starterPrice: Number.isFinite(parsed?.starterPrice) ? Number(parsed.starterPrice) : PLAN_PRICES.starter,
+      proPrice: Number.isFinite(parsed?.proPrice) ? Number(parsed.proPrice) : PLAN_PRICES.pro,
+      freeMonthlyTransactions: Number.isFinite(parsed?.freeMonthlyTransactions) ? Number(parsed.freeMonthlyTransactions) : FREE_MONTHLY_TRANSACTION_LIMIT,
     };
   };
 
@@ -823,6 +863,8 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
     normalizeNameList,
     getPlanLimits,
     getPlanPrice,
+    getPlanPricing,
+    getMonthlyTransactionUsage,
     normalizeSourceChannel,
     normalizeSlaTarget,
     sanitizeBreachReason,

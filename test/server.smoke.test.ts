@@ -226,3 +226,72 @@ test("tenant admins cannot act on another tenant's queue", async (t) => {
   });
   assert.equal(forbiddenCall.response.status, 403);
 });
+
+
+test("free tier monthly transaction cap blocks new queue entries once reached", async (t) => {
+  const runtime = await startTestServer();
+  t.after(async () => {
+    await runtime.dispose();
+  });
+
+  const superLogin = await requestJson(runtime.baseUrl, "/api/admin/login/super", {
+    body: {
+      email: process.env.ADMIN_EMAIL,
+      password: process.env.ADMIN_PASSWORD,
+    },
+  });
+  assert.equal(superLogin.response.status, 200);
+  const superToken = superLogin.data.token as string;
+
+  const configure = await requestJson(runtime.baseUrl, "/api/admin/billing/settings", {
+    token: superToken,
+    body: {
+      freeMonthlyTransactions: 1,
+      starterPrice: 1200,
+      proPrice: 3400,
+    },
+  });
+  assert.equal(configure.response.status, 200);
+
+  const tenant = await registerTenant(runtime.baseUrl, "free-cap");
+
+  const first = await requestJson(runtime.baseUrl, "/api/queue", {
+    token: tenant.token,
+    body: {
+      id: "SQ-CAP001",
+      tenant_id: tenant.tenantId,
+      name: "First Customer",
+      branch: tenant.branch,
+      service: tenant.service,
+      priority: "Regular",
+      sourceChannel: "self_service",
+      slaTargetMinutes: 10,
+      checkInTime: new Date().toISOString(),
+    },
+  });
+  assert.equal(first.response.status, 200);
+
+  const second = await requestJson(runtime.baseUrl, "/api/queue", {
+    token: tenant.token,
+    body: {
+      id: "SQ-CAP002",
+      tenant_id: tenant.tenantId,
+      name: "Second Customer",
+      branch: tenant.branch,
+      service: tenant.service,
+      priority: "Regular",
+      sourceChannel: "self_service",
+      slaTargetMinutes: 10,
+      checkInTime: new Date().toISOString(),
+    },
+  });
+  assert.equal(second.response.status, 403);
+  assert.equal(second.data.code, "FREE_TIER_LIMIT_REACHED");
+
+  const billingMe = await requestJson(runtime.baseUrl, "/api/billing/me", { token: tenant.token });
+  assert.equal(billingMe.response.status, 200);
+  assert.equal(billingMe.data.pricing.starter, 1200);
+  assert.equal(billingMe.data.pricing.pro, 3400);
+  assert.equal(billingMe.data.usage.count, 1);
+  assert.equal(billingMe.data.usage.limit, 1);
+});

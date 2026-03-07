@@ -189,7 +189,7 @@ export default function AdminOverviewPanel({
             <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">Subscription Status</h4>
             <p className="text-[10px] text-slate-400 mt-0.5">Upgrade plan by submitting proof of payment.</p>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
               <p className="text-[10px] font-bold text-slate-400 uppercase">Current Plan</p>
               <p className="text-sm font-black text-[#003366] uppercase">{billingMe?.subscription?.plan || billingMe?.tenant?.plan || 'free'}</p>
@@ -206,7 +206,26 @@ export default function AdminOverviewPanel({
               <p className="text-[10px] font-bold text-slate-400 uppercase">Grace Days</p>
               <p className="text-sm font-black text-slate-700">{billingMe?.subscription?.grace_days ?? billingMe?.billing?.graceDays ?? 5}</p>
             </div>
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+              <p className="text-[10px] font-bold text-slate-400 uppercase">Free Tier Usage</p>
+              <p className="text-sm font-black text-slate-700">{billingMe?.usage ? `${billingMe.usage.count}/${billingMe.usage.limit}` : '—'}</p>
+            </div>
           </div>
+          {(billingMe?.tenant?.plan || 'free') === 'free' && billingMe?.usage && (
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black text-amber-700 uppercase tracking-[0.2em]">Monthly Free Tier Transactions</p>
+                  <p className="text-sm font-bold text-amber-900">{billingMe.usage.count} used this month, {billingMe.usage.remaining} remaining before the reset.</p>
+                </div>
+                <p className="text-sm font-black text-amber-700">{Math.min(100, Math.round((billingMe.usage.count / Math.max(1, billingMe.usage.limit)) * 100))}%</p>
+              </div>
+              <div className="h-2 rounded-full bg-amber-100 overflow-hidden">
+                <div className="h-full rounded-full bg-amber-500" style={{ width: `${Math.min(100, Math.round((billingMe.usage.count / Math.max(1, billingMe.usage.limit)) * 100))}%` }} />
+              </div>
+              <p className="text-[11px] text-amber-800">The free tier refreshes every new month. Upgrade to Starter or Pro anytime if you need more transactions.</p>
+            </div>
+          )}
         </div>
       )}
 

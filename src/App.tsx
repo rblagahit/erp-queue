@@ -53,7 +53,7 @@ interface AppProps {
   loginRole?: 'tenant_admin' | 'super_admin';
 }
 
-type AdminArea = 'overview' | 'access' | 'catalog' | 'kiosk' | 'profile' | 'integrations' | 'subscription' | 'exports' | 'delivery' | 'billing' | 'users' | 'tenants';
+type AdminArea = 'overview' | 'access' | 'catalog' | 'kiosk' | 'profile' | 'integrations' | 'subscription' | 'seo' | 'exports' | 'delivery' | 'billing' | 'users' | 'tenants';
 type AdminParentKey = 'operations' | 'administration' | 'insights';
 
 export default function App({ onGoToLanding, initialView = 'teller', loginRole = 'tenant_admin' }: AppProps = {}) {
@@ -97,6 +97,11 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [apiKey, setApiKey] = useState('');       // stores masked value from server
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [siteSeoTitle, setSiteSeoTitle] = useState('');
+  const [siteSeoDescription, setSiteSeoDescription] = useState('');
+  const [siteSeoKeywords, setSiteSeoKeywords] = useState('');
+  const [supportEmail, setSupportEmail] = useState('');
+  const [siteSettingsSaving, setSiteSettingsSaving] = useState(false);
 
   // Role-based access
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
@@ -145,7 +150,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [billingMe, setBillingMe] = useState<any>(null);
   const [billingOverview, setBillingOverview] = useState<any>(null);
   const [billingSubmissions, setBillingSubmissions] = useState<any[]>([]);
-  const [billingSettings, setBillingSettings] = useState<any>({ bankName: '', accountName: '', accountNumber: '', instructions: '', qrUrl: '', graceDays: 5 });
+  const [billingSettings, setBillingSettings] = useState<any>({ bankName: '', accountName: '', accountNumber: '', instructions: '', qrUrl: '', graceDays: 5, starterPrice: 999, proPrice: 2499, freeMonthlyTransactions: 500 });
   const [billingSettingsSaving, setBillingSettingsSaving] = useState(false);
   const [billingQrDataUrl, setBillingQrDataUrl] = useState('');
   const [paymentPlan, setPaymentPlan] = useState<'starter' | 'pro'>('starter');
@@ -320,6 +325,12 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
   // Load IPs, settings, SMTP, and super-admin data when entering admin view
   useEffect(() => {
+    if (view === 'admin') {
+      void loadPublicSiteConfig();
+    }
+  }, [view]);
+
+  useEffect(() => {
     if (view === 'admin' && adminToken) {
       loadIPs();
       loadSettings();
@@ -331,6 +342,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         loadBillingOverview();
         loadBillingSubmissions();
         loadBillingSettings();
+        loadSiteSettings();
       }
     }
   }, [view, adminToken, currentUserRole]);
@@ -368,6 +380,67 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       }
     } catch (err) {
       console.error('Failed to load settings', err);
+    }
+  };
+
+  const loadPublicSiteConfig = async () => {
+    try {
+      const res = await fetch('/api/public/site-config');
+      if (!res.ok) return;
+      const data = await res.json();
+      setSupportEmail(data.supportEmail || '');
+    } catch (err) {
+      console.error('Failed to load public site config', err);
+    }
+  };
+
+  const loadSiteSettings = async (token?: string) => {
+    const t = token ?? adminToken;
+    if (!t) return;
+    try {
+      const res = await fetch('/api/admin/settings/site', { headers: { 'x-admin-token': t } });
+      if (res.ok) {
+        const data = await res.json();
+        setSiteSeoTitle(data.seoTitle || '');
+        setSiteSeoDescription(data.seoDescription || '');
+        setSiteSeoKeywords(data.seoKeywords || '');
+        setSupportEmail(data.supportEmail || '');
+      }
+    } catch (err) {
+      console.error('Failed to load site settings', err);
+    }
+  };
+
+  const saveSiteSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    setSiteSettingsSaving(true);
+    try {
+      const res = await fetch('/api/admin/settings/site', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({
+          seoTitle: siteSeoTitle,
+          seoDescription: siteSeoDescription,
+          seoKeywords: siteSeoKeywords,
+          supportEmail,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSiteSeoTitle(data.seoTitle || '');
+        setSiteSeoDescription(data.seoDescription || '');
+        setSiteSeoKeywords(data.seoKeywords || '');
+        setSupportEmail(data.supportEmail || '');
+        showNotification('SEO and support settings saved.');
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to save SEO and support settings.' }));
+        showNotification(err.error || 'Failed to save SEO and support settings.', true);
+      }
+    } catch {
+      showNotification('Failed to save SEO and support settings.', true);
+    } finally {
+      setSiteSettingsSaving(false);
     }
   };
 
@@ -1599,6 +1672,12 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
           ...(currentUserRole === 'super_admin'
             ? [
                 {
+                  key: 'seo' as AdminArea,
+                  label: 'SEO & Support',
+                  desc: 'Manage landing-page metadata and the shared support email',
+                  badge: supportEmail ? 'Configured' : 'Pending',
+                },
+                {
                   key: 'users' as AdminArea,
                   label: 'Users',
                   desc: 'Update roles and maintain platform user access',
@@ -1660,6 +1739,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     services.length,
     companyName,
     apiKey,
+    supportEmail,
     currentUserRole,
     adminUsers.length,
     adminTenants.length,
@@ -2328,11 +2408,11 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                     </div>
                   )}
 
-                  {(adminArea === 'profile' || adminArea === 'integrations' || adminArea === 'subscription') && (
+                  {(adminArea === 'profile' || adminArea === 'integrations' || adminArea === 'subscription' || adminArea === 'seo') && (
                     <div className="grid grid-cols-1 gap-6">
                       <Suspense fallback={<div className="white-card rounded-2xl p-6 text-xs font-bold uppercase tracking-widest text-slate-400">Loading settings…</div>}>
                         <AdminSettingsPanel
-                          activeSection={adminArea as 'profile' | 'integrations' | 'subscription'}
+                          activeSection={adminArea as 'profile' | 'integrations' | 'subscription' | 'seo'}
                           currentUserRole={currentUserRole}
                           companyName={companyName}
                           industry={industry}
@@ -2351,6 +2431,11 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           paymentNotes={paymentNotes}
                           paymentProofDataUrl={paymentProofDataUrl}
                           paymentSubmitting={paymentSubmitting}
+                          siteSeoTitle={siteSeoTitle}
+                          siteSeoDescription={siteSeoDescription}
+                          siteSeoKeywords={siteSeoKeywords}
+                          supportEmail={supportEmail}
+                          siteSettingsSaving={siteSettingsSaving}
                           onSaveProfile={saveProfile}
                           onUploadCompanyLogo={uploadCompanyLogo}
                           onSetCompanyName={setCompanyName}
@@ -2367,6 +2452,11 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           onSetPaymentReference={setPaymentReference}
                           onSetPaymentNotes={setPaymentNotes}
                           onSetPaymentProofDataUrl={setPaymentProofDataUrl}
+                          onSaveSiteSettings={saveSiteSettings}
+                          onSetSiteSeoTitle={setSiteSeoTitle}
+                          onSetSiteSeoDescription={setSiteSeoDescription}
+                          onSetSiteSeoKeywords={setSiteSeoKeywords}
+                          onSetSupportEmail={setSupportEmail}
                         />
                       </Suspense>
                     </div>
@@ -2412,6 +2502,23 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
         </AnimatePresence>
       </main>
+
+      {view === 'admin' && supportEmail && (
+        <a
+          href={`mailto:${supportEmail}?subject=${encodeURIComponent('Smart Queue support or feature request')}`}
+          className="fixed bottom-8 left-8 z-[90] inline-flex items-center gap-3 rounded-full bg-[#003366] px-5 py-3 text-white shadow-2xl shadow-blue-900/20 transition-all hover:-translate-y-0.5 hover:bg-[#002244]"
+        >
+          <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4l-4 4v-4z" />
+            </svg>
+          </span>
+          <span className="text-left">
+            <span className="block text-[10px] font-black uppercase tracking-[0.2em] text-blue-100">Support</span>
+            <span className="block text-sm font-bold">Contact Super Admin</span>
+          </span>
+        </a>
+      )}
 
       {/* Notification Toast */}
       <AnimatePresence>

@@ -1,7 +1,7 @@
 import type { ChangeEvent, FormEvent } from 'react';
 
 type BillingMe = any;
-type SettingsSection = 'profile' | 'integrations' | 'subscription';
+type SettingsSection = 'profile' | 'integrations' | 'subscription' | 'seo';
 
 type AdminSettingsPanelProps = {
   activeSection: SettingsSection;
@@ -23,6 +23,11 @@ type AdminSettingsPanelProps = {
   paymentNotes: string;
   paymentProofDataUrl: string;
   paymentSubmitting: boolean;
+  siteSeoTitle: string;
+  siteSeoDescription: string;
+  siteSeoKeywords: string;
+  supportEmail: string;
+  siteSettingsSaving: boolean;
   onSaveProfile: (e: FormEvent<HTMLFormElement>) => void;
   onUploadCompanyLogo: (file: File) => void;
   onSetCompanyName: (value: string) => void;
@@ -39,6 +44,11 @@ type AdminSettingsPanelProps = {
   onSetPaymentReference: (value: string) => void;
   onSetPaymentNotes: (value: string) => void;
   onSetPaymentProofDataUrl: (value: string) => void;
+  onSaveSiteSettings: (e: FormEvent<HTMLFormElement>) => void;
+  onSetSiteSeoTitle: (value: string) => void;
+  onSetSiteSeoDescription: (value: string) => void;
+  onSetSiteSeoKeywords: (value: string) => void;
+  onSetSupportEmail: (value: string) => void;
 };
 
 export default function AdminSettingsPanel({
@@ -61,6 +71,11 @@ export default function AdminSettingsPanel({
   paymentNotes,
   paymentProofDataUrl,
   paymentSubmitting,
+  siteSeoTitle,
+  siteSeoDescription,
+  siteSeoKeywords,
+  supportEmail,
+  siteSettingsSaving,
   onSaveProfile,
   onUploadCompanyLogo,
   onSetCompanyName,
@@ -77,6 +92,11 @@ export default function AdminSettingsPanel({
   onSetPaymentReference,
   onSetPaymentNotes,
   onSetPaymentProofDataUrl,
+  onSaveSiteSettings,
+  onSetSiteSeoTitle,
+  onSetSiteSeoDescription,
+  onSetSiteSeoKeywords,
+  onSetSupportEmail,
 }: AdminSettingsPanelProps) {
   return (
     <>
@@ -189,6 +209,74 @@ export default function AdminSettingsPanel({
               className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {apiKey ? 'Update API Key' : 'Save API Key'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {activeSection === 'seo' && currentUserRole === 'super_admin' && (
+        <div className="white-card rounded-2xl p-6 space-y-5">
+          <div className="border-b pb-3">
+            <h4 className="text-sm font-bold text-[#003366] uppercase tracking-wider">SEO & Support</h4>
+            <p className="text-[10px] text-slate-400 mt-0.5">Control the public landing-page title tag, meta description, keywords, and the shared support email used by floating contact buttons.</p>
+          </div>
+
+          <form onSubmit={onSaveSiteSettings} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Title Tag</label>
+              <input
+                value={siteSeoTitle}
+                onChange={(e) => onSetSiteSeoTitle(e.target.value)}
+                placeholder="Smart Queue | Queue Management SaaS for Branches"
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+              />
+              <p className="text-[10px] text-slate-400">Best practice: keep this around 50 to 60 characters and put the primary phrase near the front.</p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Meta Description</label>
+              <textarea
+                rows={3}
+                value={siteSeoDescription}
+                onChange={(e) => onSetSiteSeoDescription(e.target.value)}
+                placeholder="Real-time queue management, SLA tracking, KPI dashboards, and branch analytics for banks and service teams."
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+              />
+              <p className="text-[10px] text-slate-400">Aim for one clear value proposition in roughly 140 to 160 characters.</p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">SEO Keywords</label>
+              <input
+                value={siteSeoKeywords}
+                onChange={(e) => onSetSiteSeoKeywords(e.target.value)}
+                placeholder="queue management software, SLA tracking SaaS, branch analytics"
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+              />
+              <p className="text-[10px] text-slate-400">Use a short comma-separated list of commercial-intent phrases, not a keyword dump.</p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Support Email</label>
+              <input
+                type="email"
+                value={supportEmail}
+                onChange={(e) => onSetSupportEmail(e.target.value)}
+                placeholder="support@yourdomain.com"
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+              />
+              <p className="text-[10px] text-slate-400">This email powers the floating support and feature-request buttons in the landing page and admin panel.</p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 space-y-2">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Search Preview</p>
+              <p className="text-sm font-bold text-[#2553d9]">{siteSeoTitle || 'Smart Queue | Enterprise Queue & Analytics'}</p>
+              <p className="text-[11px] text-emerald-700">{supportEmail ? `Contact: ${supportEmail}` : 'Set a support email for visible contact CTAs'}</p>
+              <p className="text-xs leading-relaxed text-slate-500">{siteSeoDescription || 'Real-time queue management, SLA tracking, KPI dashboards, and automated reports for branch operations.'}</p>
+            </div>
+
+            <button type="submit" disabled={siteSettingsSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
+              {siteSettingsSaving ? 'Saving…' : 'Save SEO & Support Settings'}
             </button>
           </form>
         </div>
