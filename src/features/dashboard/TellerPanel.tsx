@@ -3,6 +3,8 @@ import { cn } from '../../utils';
 import {
   BREACH_REASON_OPTIONS,
   NO_SHOW_REASON_OPTIONS,
+  PAUSE_REASON_OPTIONS,
+  RESOLUTION_CODE_OPTIONS,
   SLA_THRESHOLD_MINUTES,
   type QueueEntry,
 } from '../queue/model';
@@ -19,7 +21,9 @@ type TellerPanelProps = {
   termPlural: string;
   completionNotes: Record<string, string>;
   completionBreachReasons: Record<string, string>;
+  completionResolutionCodes: Record<string, string>;
   noShowReasons: Record<string, string>;
+  pauseReasons: Record<string, string>;
   reassignBranch: Record<string, string>;
   reassignService: Record<string, string>;
   formatDuration: (ms: number) => string;
@@ -28,9 +32,13 @@ type TellerPanelProps = {
   onCallNext: (id: string) => void;
   onCompletionNotesChange: (id: string, value: string) => void;
   onCompletionBreachReasonChange: (id: string, value: string) => void;
+  onCompletionResolutionCodeChange: (id: string, value: string) => void;
   onNoShowReasonChange: (id: string, value: string) => void;
-  onCompleteTransaction: (id: string, notes: string, breachReason: string) => void;
+  onPauseReasonChange: (id: string, value: string) => void;
+  onCompleteTransaction: (id: string, notes: string, breachReason: string, resolutionCode: string) => void;
   onRecallTicket: (id: string) => void;
+  onHoldTicket: (id: string) => void;
+  onResumeTicket: (id: string) => void;
   onMarkNoShow: (id: string) => void;
   onReassignBranchChange: (id: string, value: string) => void;
   onReassignServiceChange: (id: string, value: string) => void;
@@ -49,7 +57,9 @@ export default function TellerPanel({
   termPlural,
   completionNotes,
   completionBreachReasons,
+  completionResolutionCodes,
   noShowReasons,
+  pauseReasons,
   reassignBranch,
   reassignService,
   formatDuration,
@@ -58,9 +68,13 @@ export default function TellerPanel({
   onCallNext,
   onCompletionNotesChange,
   onCompletionBreachReasonChange,
+  onCompletionResolutionCodeChange,
   onNoShowReasonChange,
+  onPauseReasonChange,
   onCompleteTransaction,
   onRecallTicket,
+  onHoldTicket,
+  onResumeTicket,
   onMarkNoShow,
   onReassignBranchChange,
   onReassignServiceChange,
@@ -153,12 +167,12 @@ export default function TellerPanel({
                             {formatDuration(waitTimeMs)}
                           </p>
                         </div>
-                        {item.status === 'Processing' && (
+                        {(item.status === 'Processing' || item.status === 'On Hold') && (
                           <>
                             <div className="w-px h-6 bg-slate-100"></div>
                             <div className="text-center">
-                              <p className="text-[8px] font-bold text-blue-400 uppercase">Processing</p>
-                              <p className="text-xs font-black text-blue-600 live-indicator">{formatDuration(processingTimeMs)}</p>
+                              <p className="text-[8px] font-bold text-blue-400 uppercase">{item.status === 'On Hold' ? 'Held' : 'Processing'}</p>
+                              <p className={cn("text-xs font-black", item.status === 'On Hold' ? 'text-amber-600' : 'text-blue-600 live-indicator')}>{formatDuration(processingTimeMs)}</p>
                             </div>
                           </>
                         )}
@@ -173,11 +187,20 @@ export default function TellerPanel({
                       </p>
                       <span className={cn(
                         "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-tighter",
-                        item.status === 'Processing' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'
+                        item.status === 'Processing'
+                          ? 'bg-blue-50 text-blue-600'
+                          : item.status === 'On Hold'
+                            ? 'bg-amber-50 text-amber-600'
+                            : 'bg-slate-100 text-slate-500'
                       )}>
                         <span className={cn("w-1 h-1 rounded-full bg-current", item.status === 'Processing' && "live-indicator")}></span>
                         {item.status}
                       </span>
+                      {item.pauseReason && (
+                        <p className="text-[8px] uppercase font-bold text-amber-500">
+                          Hold reason: {item.pauseReason}
+                        </p>
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-5 text-right">
@@ -208,6 +231,16 @@ export default function TellerPanel({
                             </select>
                           )}
                           <select
+                            value={completionResolutionCodes[item.id] || ''}
+                            onChange={(e) => onCompletionResolutionCodeChange(item.id, e.target.value)}
+                            className="w-56 text-[10px] bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 outline-none text-blue-700"
+                          >
+                            <option value="">Select resolution code</option>
+                            {RESOLUTION_CODE_OPTIONS.map((code) => (
+                              <option key={code} value={code}>{code.replace(/_/g, ' ')}</option>
+                            ))}
+                          </select>
+                          <select
                             value={noShowReasons[item.id] || ''}
                             onChange={(e) => onNoShowReasonChange(item.id, e.target.value)}
                             className="w-56 text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none text-slate-600"
@@ -217,9 +250,19 @@ export default function TellerPanel({
                               <option key={reason} value={reason}>{reason}</option>
                             ))}
                           </select>
+                          <select
+                            value={pauseReasons[item.id] || ''}
+                            onChange={(e) => onPauseReasonChange(item.id, e.target.value)}
+                            className="w-56 text-[10px] bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 outline-none text-amber-700"
+                          >
+                            <option value="">Select hold reason</option>
+                            {PAUSE_REASON_OPTIONS.map((reason) => (
+                              <option key={reason} value={reason}>{reason}</option>
+                            ))}
+                          </select>
                           <button
                             type="button"
-                            onClick={() => onCompleteTransaction(item.id, completionNotes[item.id] || '', completionBreachReasons[item.id] || '')}
+                            onClick={() => onCompleteTransaction(item.id, completionNotes[item.id] || '', completionBreachReasons[item.id] || '', completionResolutionCodes[item.id] || '')}
                             className="text-[10px] font-bold uppercase bg-[#003366] text-white px-4 py-2 rounded-lg hover:shadow-lg transition-all shadow-md flex items-center gap-2"
                           >
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
@@ -228,6 +271,15 @@ export default function TellerPanel({
                           <button type="button" onClick={() => onRecallTicket(item.id)} className="text-[10px] font-bold uppercase text-amber-600 border border-amber-200 px-4 py-1.5 rounded-lg hover:bg-amber-50 transition-colors">
                             Recall
                           </button>
+                          {item.status === 'On Hold' ? (
+                            <button type="button" onClick={() => onResumeTicket(item.id)} className="text-[10px] font-bold uppercase text-emerald-600 border border-emerald-200 px-4 py-1.5 rounded-lg hover:bg-emerald-50 transition-colors">
+                              Resume
+                            </button>
+                          ) : (
+                            <button type="button" onClick={() => onHoldTicket(item.id)} className="text-[10px] font-bold uppercase text-amber-700 border border-amber-200 px-4 py-1.5 rounded-lg hover:bg-amber-50 transition-colors">
+                              Put On Hold
+                            </button>
+                          )}
                           <button type="button" onClick={() => onMarkNoShow(item.id)} className="text-[10px] font-bold uppercase text-slate-400 border border-slate-200 px-4 py-1.5 rounded-lg hover:bg-slate-50 hover:text-red-500 hover:border-red-200 transition-colors">
                             No Show
                           </button>

@@ -9,6 +9,8 @@ import { cn } from './utils';
 import {
   BREACH_REASON_OPTIONS,
   NO_SHOW_REASON_OPTIONS,
+  PAUSE_REASON_OPTIONS,
+  RESOLUTION_CODE_OPTIONS,
   SLA_THRESHOLD_MINUTES,
   type QueueApiEntry,
   type QueueEntry,
@@ -121,7 +123,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [confirmRemoveIP, setConfirmRemoveIP] = useState<string | null>(null);
   const [completionNotes, setCompletionNotes] = useState<Record<string, string>>({});
   const [completionBreachReasons, setCompletionBreachReasons] = useState<Record<string, string>>({});
+  const [completionResolutionCodes, setCompletionResolutionCodes] = useState<Record<string, string>>({});
   const [noShowReasons, setNoShowReasons] = useState<Record<string, string>>({});
+  const [pauseReasons, setPauseReasons] = useState<Record<string, string>>({});
   const [reassignBranch, setReassignBranch] = useState<Record<string, string>>({});
   const [reassignService, setReassignService] = useState<Record<string, string>>({});
   const [catalogBranchesText, setCatalogBranchesText] = useState('');
@@ -182,11 +186,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     sourceChannel: entry.sourceChannel ?? entry.source_channel ?? 'self_service',
     slaTargetMinutes: entry.slaTargetMinutes ?? entry.sla_target_minutes ?? SLA_THRESHOLD_MINUTES,
     firstCalledTime: entry.firstCalledTime ?? entry.first_called_time ?? null,
+    pausedAt: entry.pausedAt ?? entry.paused_at ?? null,
     reassignCount: entry.reassignCount ?? entry.reassign_count ?? 0,
     handledByUserId: entry.handledByUserId ?? entry.handled_by_user_id ?? null,
     handledByEmail: entry.handledByEmail ?? entry.handled_by_email ?? null,
     breachReason: entry.breachReason ?? entry.breach_reason ?? null,
     noShowReason: entry.noShowReason ?? entry.no_show_reason ?? null,
+    pauseReason: entry.pauseReason ?? entry.pause_reason ?? null,
+    resolutionCode: entry.resolutionCode ?? entry.resolution_code ?? null,
   });
 
   const fetchData = async () => {
@@ -1103,7 +1110,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
 
       const headers = [
         "Ticket ID", `${termCopy.title} Name`, "Branch", "Service", "Priority",
-        "Entry Source", "SLA Target (m)", "First Response", "Reassignments", "Handled By", "Outcome", "Breach Reason", "No Show Reason",
+        "Entry Source", "SLA Target (m)", "First Response", "Reassignments", "Handled By", "Outcome", "Resolution Code", "Breach Reason", "No Show Reason", "Pause Reason",
         "Check-In", "Called At", "Completed At", "Wait Time (m)", "Service Time (m)"
       ];
       const rows = data.map(h => {
@@ -1112,7 +1119,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
         const svc = h.completedTime && h.calledTime
           ? Math.round((new Date(h.completedTime).getTime() - new Date(h.calledTime).getTime()) / 60000) : 0;
         return [h.id, h.name, h.branch, h.service, h.priority,
-          h.sourceChannel || 'self_service', h.slaTargetMinutes || SLA_THRESHOLD_MINUTES, h.firstCalledTime || '', h.reassignCount || 0, h.handledByEmail || '', h.outcome || h.status, h.breachReason || '', h.noShowReason || '',
+          h.sourceChannel || 'self_service', h.slaTargetMinutes || SLA_THRESHOLD_MINUTES, h.firstCalledTime || '', h.reassignCount || 0, h.handledByEmail || '', h.outcome || h.status, h.resolutionCode || '', h.breachReason || '', h.noShowReason || '', h.pauseReason || '',
           h.checkInTime, h.calledTime || '', h.completedTime || '', wait, svc];
       });
 
@@ -1217,9 +1224,13 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     }
   };
 
-  const completeTransaction = async (id: string, notes: string, breachReason: string) => {
+  const completeTransaction = async (id: string, notes: string, breachReason: string, resolutionCode: string) => {
     if (!adminToken) {
       showNotification('Sign in required for teller actions.', true);
+      return;
+    }
+    if (!resolutionCode.trim()) {
+      showNotification('Select a resolution code before completing the ticket.', true);
       return;
     }
     const ticket = queue.find((item) => item.id === id);
@@ -1238,11 +1249,13 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       const res = await fetch('/api/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
-        body: JSON.stringify({ id, completedTime: new Date().toISOString(), notes, breachReason })
+        body: JSON.stringify({ id, completedTime: new Date().toISOString(), notes, breachReason, resolutionCode })
       });
       if (res.ok) {
         setCompletionNotes(prev => ({ ...prev, [id]: '' }));
         setCompletionBreachReasons(prev => ({ ...prev, [id]: '' }));
+        setCompletionResolutionCodes(prev => ({ ...prev, [id]: '' }));
+        setPauseReasons(prev => ({ ...prev, [id]: '' }));
         await fetchData();
       }
       else showNotification('Failed to complete transaction. Please try again.', true);
@@ -1325,6 +1338,58 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       }
     } catch {
       showNotification('Failed to recall ticket. Check connection.', true);
+    }
+  };
+
+  const holdTicket = async (id: string) => {
+    if (!adminToken) {
+      showNotification('Sign in required for teller actions.', true);
+      return;
+    }
+    const pauseReason = pauseReasons[id] || '';
+    if (!pauseReason.trim()) {
+      showNotification('Select a hold reason before pausing the ticket.', true);
+      return;
+    }
+    try {
+      const res = await fetch('/api/hold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ id, pauseReason })
+      });
+      if (res.ok) {
+        await fetchData();
+        showNotification(`Ticket ${id} placed on hold.`);
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to hold ticket.' }));
+        showNotification(err.error || 'Failed to hold ticket.', true);
+      }
+    } catch {
+      showNotification('Failed to hold ticket. Check connection.', true);
+    }
+  };
+
+  const resumeTicket = async (id: string) => {
+    if (!adminToken) {
+      showNotification('Sign in required for teller actions.', true);
+      return;
+    }
+    try {
+      const res = await fetch('/api/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) {
+        setPauseReasons(prev => ({ ...prev, [id]: '' }));
+        await fetchData();
+        showNotification(`Ticket ${id} resumed.`);
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to resume ticket.' }));
+        showNotification(err.error || 'Failed to resume ticket.', true);
+      }
+    } catch {
+      showNotification('Failed to resume ticket. Check connection.', true);
     }
   };
 
@@ -1649,7 +1714,9 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                 termPlural={termCopy.plural}
                 completionNotes={completionNotes}
                 completionBreachReasons={completionBreachReasons}
+                completionResolutionCodes={completionResolutionCodes}
                 noShowReasons={noShowReasons}
+                pauseReasons={pauseReasons}
                 reassignBranch={reassignBranch}
                 reassignService={reassignService}
                 formatDuration={formatDuration}
@@ -1658,9 +1725,13 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                 onCallNext={callNext}
                 onCompletionNotesChange={(id, value) => setCompletionNotes(prev => ({ ...prev, [id]: value }))}
                 onCompletionBreachReasonChange={(id, value) => setCompletionBreachReasons(prev => ({ ...prev, [id]: value }))}
+                onCompletionResolutionCodeChange={(id, value) => setCompletionResolutionCodes(prev => ({ ...prev, [id]: value }))}
                 onNoShowReasonChange={(id, value) => setNoShowReasons(prev => ({ ...prev, [id]: value }))}
+                onPauseReasonChange={(id, value) => setPauseReasons(prev => ({ ...prev, [id]: value }))}
                 onCompleteTransaction={completeTransaction}
                 onRecallTicket={recallTicket}
+                onHoldTicket={holdTicket}
+                onResumeTicket={resumeTicket}
                 onMarkNoShow={markNoShow}
                 onReassignBranchChange={(id, value) => setReassignBranch(prev => ({ ...prev, [id]: value }))}
                 onReassignServiceChange={(id, value) => setReassignService(prev => ({ ...prev, [id]: value }))}
