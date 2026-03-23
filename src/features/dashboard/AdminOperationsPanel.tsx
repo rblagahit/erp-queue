@@ -41,6 +41,7 @@ type AdminOperationsPanelProps = {
   qrService: string;
   kioskUrl: string;
   kioskQrImageUrl: string;
+  branchKioskLinks: Array<{ branch: string; url: string }>;
   onAddIP: (e: FormEvent<HTMLFormElement>) => void;
   onSaveAccessMode: (mode: 'ip_whitelist' | 'hybrid' | 'trusted_devices') => void;
   onRegisterTrustedDevice: (e: FormEvent<HTMLFormElement>) => void;
@@ -59,6 +60,7 @@ type AdminOperationsPanelProps = {
   onSetQrBranch: (value: string) => void;
   onSetQrService: (value: string) => void;
   onCopyKioskUrl: () => void;
+  onCopyBranchKioskUrl: (url: string) => void;
 };
 
 export default function AdminOperationsPanel({
@@ -85,6 +87,7 @@ export default function AdminOperationsPanel({
   qrService,
   kioskUrl,
   kioskQrImageUrl,
+  branchKioskLinks,
   onAddIP,
   onSaveAccessMode,
   onRegisterTrustedDevice,
@@ -103,6 +106,7 @@ export default function AdminOperationsPanel({
   onSetQrBranch,
   onSetQrService,
   onCopyKioskUrl,
+  onCopyBranchKioskUrl,
 }: AdminOperationsPanelProps) {
   return (
     <>
@@ -394,6 +398,28 @@ export default function AdminOperationsPanel({
             >
               Copy Kiosk URL
             </button>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+            <p className="text-[10px] font-bold text-slate-400 uppercase">Branch Unique Links</p>
+            <p className="text-[10px] text-slate-500">Each branch URL is scoped to this tenant and branch so queue sessions stay under the correct tenant records.</p>
+            <div className="space-y-2 max-h-56 overflow-y-auto no-scrollbar">
+              {branchKioskLinks.map((item) => (
+                <div key={item.branch} className="rounded-lg border border-slate-100 bg-slate-50 p-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="text-[11px] font-black text-[#003366]">{item.branch}</p>
+                    <button
+                      type="button"
+                      onClick={() => onCopyBranchKioskUrl(item.url)}
+                      className="text-[9px] font-black uppercase text-amber-600 border border-amber-200 px-2 py-1 rounded-md hover:bg-amber-50 transition-colors"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-600 break-all">{item.url}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

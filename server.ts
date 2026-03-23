@@ -295,12 +295,7 @@ async function startServer() {
     console.log(`[AUTH] Seeded default admin: ${email}`);
   }
 
-  // Clean expired sessions on startup and hourly thereafter
-  const cleanSessions = () => {
-    db.prepare("DELETE FROM admin_sessions WHERE createdAt < datetime('now', '-24 hours')").run();
-  };
-  cleanSessions();
-  setInterval(cleanSessions, 60 * 60 * 1000);
+  // Sessions are persistent until explicit logout.
 
   // ===== HELPERS =====
   const normalizeIP = (ip: string): string => {
@@ -1286,6 +1281,64 @@ async function startServer() {
     res.json(tenants);
   });
 
+  app.post("/api/admin/tenants", requireSuperAdmin, async (req, res) => {
+    const { name, slug, plan, adminName, adminEmail, adminPassword } = req.body || {};
+    const tenantName = typeof name === 'string' ? name.trim() : '';
+    const tenantSlugInput = typeof slug === 'string' ? slug.trim() : '';
+    const tenantPlan = typeof plan === 'string' ? plan.toLowerCase().trim() : 'free';
+    const userName = typeof adminName === 'string' ? adminName.trim() : '';
+    const userEmail = typeof adminEmail === 'string' ? adminEmail.toLowerCase().trim() : '';
+    const userPassword = typeof adminPassword === 'string' ? adminPassword : '';
+
+    if (!tenantName) return res.status(400).json({ error: 'Tenant name is required' });
+    if (!userEmail) return res.status(400).json({ error: 'Admin email is required' });
+    if (!userPassword || userPassword.length < 8) {
+      return res.status(400).json({ error: 'Admin password must be at least 8 characters' });
+    }
+    if (!PLAN_LIMITS[tenantPlan]) {
+      return res.status(400).json({ error: 'Invalid plan. Must be free, starter, or pro' });
+    }
+
+    const normalizedSlug = (tenantSlugInput || tenantName)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    if (!normalizedSlug) return res.status(400).json({ error: 'Invalid tenant slug' });
+
+    const existingEmail = db.prepare("SELECT id FROM users WHERE email = ?").get(userEmail) as any;
+    if (existingEmail) {
+      return res.status(409).json({ error: 'A user with this admin email already exists' });
+    }
+
+    const existingSlug = db.prepare("SELECT id FROM tenants WHERE slug = ?").get(normalizedSlug) as any;
+    if (existingSlug) {
+      return res.status(409).json({ error: 'Tenant slug already exists' });
+    }
+
+    const tenantId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const hash = await bcrypt.hash(userPassword, 12);
+
+    const tx = db.transaction(() => {
+      db.prepare(
+        "INSERT INTO tenants (id, name, slug, settings, plan, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(tenantId, tenantName, normalizedSlug, JSON.stringify({}), tenantPlan, now);
+
+      db.prepare(
+        "INSERT INTO users (id, email, password_hash, role, tenant_id, name, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(userId, userEmail, hash, 'tenant_admin', tenantId, userName, now);
+    });
+    tx();
+
+    ensureTenantCatalog(tenantId);
+    ensureTenantSubscription(tenantId);
+    db.prepare("UPDATE subscriptions SET plan = ?, amount = ?, updatedAt = ? WHERE tenant_id = ?")
+      .run(tenantPlan, getPlanPrice(tenantPlan), now, tenantId);
+
+    res.status(201).json({ status: 'ok', tenantId, userId });
+  });
+
   app.put("/api/admin/tenants/:id", requireSuperAdmin, (req, res) => {
     const { name, plan } = req.body;
     const { id } = req.params;
@@ -1348,6 +1401,23 @@ async function startServer() {
     db.prepare("DELETE FROM admin_sessions WHERE user_id = ?").run(id);
     db.prepare("DELETE FROM users WHERE id = ?").run(id);
     res.json({ status: "ok" });
+  });
+
+  app.post("/api/admin/users/:id/reset-password", requireSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { password } = req.body || {};
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const user = db.prepare("SELECT id FROM users WHERE id = ?").get(id) as any;
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const hash = await bcrypt.hash(password, 12);
+    db.prepare("UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?")
+      .run(hash, id);
+    db.prepare("DELETE FROM admin_sessions WHERE user_id = ?").run(id);
+    res.json({ status: 'ok' });
   });
 
   // Filtered history for admin CSV export

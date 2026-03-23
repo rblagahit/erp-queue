@@ -19,12 +19,27 @@ type AdminPlatformPanelProps = {
   onRefreshUsers: () => void;
   onRefreshTenants: () => void;
   onUpdateUserRole: (userId: string, role: string) => void;
+  onResetUserPassword: (userId: string, email: string) => void;
   onDeleteUser: (userId: string) => void;
   onSetConfirmDeleteUser: (value: string | null) => void;
   onSetEditTenantName: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
   onUpdateTenantName: (tenantId: string) => void;
   onSetEditTenantPlan: (updater: (prev: Record<string, 'free' | 'starter' | 'pro'>) => Record<string, 'free' | 'starter' | 'pro'>) => void;
   onUpdateTenantPlan: (tenantId: string) => void;
+  newTenantName: string;
+  newTenantSlug: string;
+  newTenantPlan: 'free' | 'starter' | 'pro';
+  newTenantAdminName: string;
+  newTenantAdminEmail: string;
+  newTenantAdminPassword: string;
+  creatingTenant: boolean;
+  onSetNewTenantName: (value: string) => void;
+  onSetNewTenantSlug: (value: string) => void;
+  onSetNewTenantPlan: (value: 'free' | 'starter' | 'pro') => void;
+  onSetNewTenantAdminName: (value: string) => void;
+  onSetNewTenantAdminEmail: (value: string) => void;
+  onSetNewTenantAdminPassword: (value: string) => void;
+  onCreateTenant: (e: FormEvent<HTMLFormElement>) => void;
   onDeleteTenant: (tenantId: string) => void;
   onSetConfirmDeleteTenant: (value: string | null) => void;
 };
@@ -46,12 +61,27 @@ export default function AdminPlatformPanel({
   onRefreshUsers,
   onRefreshTenants,
   onUpdateUserRole,
+  onResetUserPassword,
   onDeleteUser,
   onSetConfirmDeleteUser,
   onSetEditTenantName,
   onUpdateTenantName,
   onSetEditTenantPlan,
   onUpdateTenantPlan,
+  newTenantName,
+  newTenantSlug,
+  newTenantPlan,
+  newTenantAdminName,
+  newTenantAdminEmail,
+  newTenantAdminPassword,
+  creatingTenant,
+  onSetNewTenantName,
+  onSetNewTenantSlug,
+  onSetNewTenantPlan,
+  onSetNewTenantAdminName,
+  onSetNewTenantAdminEmail,
+  onSetNewTenantAdminPassword,
+  onCreateTenant,
   onDeleteTenant,
   onSetConfirmDeleteTenant,
 }: AdminPlatformPanelProps) {
@@ -184,18 +214,27 @@ export default function AdminPlatformPanel({
                         <p className="text-[10px] text-slate-400">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '—'}</p>
                       </td>
                       <td className="py-3">
-                        {confirmDeleteUser === user.id ? (
-                          <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => onDeleteUser(user.id)} className="text-[9px] font-black uppercase text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-md transition-colors">Delete</button>
-                            <button type="button" onClick={() => onSetConfirmDeleteUser(null)} className="text-[9px] font-black uppercase text-slate-500 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors">Cancel</button>
-                          </div>
-                        ) : (
-                          <button type="button" onClick={() => onSetConfirmDeleteUser(user.id)} className="text-red-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors" title="Delete user">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => onResetUserPassword(user.id, user.email)}
+                            className="text-[9px] font-black uppercase text-[#003366] border border-blue-200 px-2 py-1 rounded-md hover:bg-blue-50 transition-colors"
+                          >
+                            Reset Password
                           </button>
-                        )}
+                          {confirmDeleteUser === user.id ? (
+                            <>
+                              <button type="button" onClick={() => onDeleteUser(user.id)} className="text-[9px] font-black uppercase text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-md transition-colors">Delete</button>
+                              <button type="button" onClick={() => onSetConfirmDeleteUser(null)} className="text-[9px] font-black uppercase text-slate-500 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors">Cancel</button>
+                            </>
+                          ) : (
+                            <button type="button" onClick={() => onSetConfirmDeleteUser(user.id)} className="text-red-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors" title="Delete user">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -215,6 +254,68 @@ export default function AdminPlatformPanel({
             </div>
             <button type="button" onClick={onRefreshTenants} className="text-[10px] font-bold text-slate-400 hover:text-[#003366] uppercase tracking-widest transition-colors">Refresh</button>
           </div>
+
+          <form onSubmit={onCreateTenant} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.18em]">Add New Tenant</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <input
+                value={newTenantName}
+                onChange={(e) => onSetNewTenantName(e.target.value)}
+                placeholder="Tenant name"
+                required
+                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              <input
+                value={newTenantSlug}
+                onChange={(e) => onSetNewTenantSlug(e.target.value)}
+                placeholder="Slug (optional)"
+                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              <select
+                value={newTenantPlan}
+                onChange={(e) => onSetNewTenantPlan(e.target.value as 'free' | 'starter' | 'pro')}
+                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="free">Free</option>
+                <option value="starter">Starter</option>
+                <option value="pro">Pro</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <input
+                value={newTenantAdminName}
+                onChange={(e) => onSetNewTenantAdminName(e.target.value)}
+                placeholder="Tenant admin name (optional)"
+                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              <input
+                type="email"
+                value={newTenantAdminEmail}
+                onChange={(e) => onSetNewTenantAdminEmail(e.target.value)}
+                placeholder="Tenant admin email"
+                required
+                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              <input
+                type="password"
+                value={newTenantAdminPassword}
+                onChange={(e) => onSetNewTenantAdminPassword(e.target.value)}
+                placeholder="Temp password (min 8 chars)"
+                required
+                minLength={8}
+                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={creatingTenant}
+                className="text-[10px] font-black uppercase tracking-[0.16em] text-white bg-[#003366] px-4 py-2 rounded-lg hover:bg-[#002244] disabled:opacity-50 transition-colors"
+              >
+                {creatingTenant ? 'Creating…' : 'Add Tenant'}
+              </button>
+            </div>
+          </form>
 
           {adminTenants.length === 0 ? (
             <p className="text-xs text-slate-400 text-center py-4">No tenants found.</p>

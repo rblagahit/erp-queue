@@ -163,6 +163,13 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [confirmDeleteTenant, setConfirmDeleteTenant] = useState<string | null>(null);
   const [editTenantName, setEditTenantName] = useState<Record<string, string>>({});
   const [editTenantPlan, setEditTenantPlan] = useState<Record<string, 'free' | 'starter' | 'pro'>>({});
+  const [newTenantName, setNewTenantName] = useState('');
+  const [newTenantSlug, setNewTenantSlug] = useState('');
+  const [newTenantPlan, setNewTenantPlan] = useState<'free' | 'starter' | 'pro'>('free');
+  const [newTenantAdminName, setNewTenantAdminName] = useState('');
+  const [newTenantAdminEmail, setNewTenantAdminEmail] = useState('');
+  const [newTenantAdminPassword, setNewTenantAdminPassword] = useState('');
+  const [creatingTenant, setCreatingTenant] = useState(false);
 
   // UI state
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -1099,6 +1106,78 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
     } catch { showNotification('Failed to delete user.', true); }
   };
 
+  const resetUserPassword = async (userId: string, email: string) => {
+    if (!adminToken) return;
+    const nextPassword = window.prompt(`Set a new password for ${email}:`, '');
+    if (nextPassword === null) return;
+    if (nextPassword.length < 8) {
+      showNotification('Password must be at least 8 characters.', true);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ password: nextPassword }),
+      });
+      if (res.ok) {
+        showNotification(`Password reset for ${email}.`);
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to reset password.' }));
+        showNotification(err.error || 'Failed to reset password.', true);
+      }
+    } catch {
+      showNotification('Failed to reset password.', true);
+    }
+  };
+
+  const createTenant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    if (!newTenantName.trim() || !newTenantAdminEmail.trim() || !newTenantAdminPassword) {
+      showNotification('Tenant name, admin email, and admin password are required.', true);
+      return;
+    }
+    if (newTenantAdminPassword.length < 8) {
+      showNotification('Admin password must be at least 8 characters.', true);
+      return;
+    }
+
+    setCreatingTenant(true);
+    try {
+      const res = await fetch('/api/admin/tenants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({
+          name: newTenantName.trim(),
+          slug: newTenantSlug.trim(),
+          plan: newTenantPlan,
+          adminName: newTenantAdminName.trim(),
+          adminEmail: newTenantAdminEmail.trim(),
+          adminPassword: newTenantAdminPassword,
+        }),
+      });
+      if (res.ok) {
+        setNewTenantName('');
+        setNewTenantSlug('');
+        setNewTenantPlan('free');
+        setNewTenantAdminName('');
+        setNewTenantAdminEmail('');
+        setNewTenantAdminPassword('');
+        showNotification('Tenant created successfully.');
+        await loadAdminTenants();
+        await loadAdminUsers();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to create tenant.' }));
+        showNotification(err.error || 'Failed to create tenant.', true);
+      }
+    } catch {
+      showNotification('Failed to create tenant.', true);
+    } finally {
+      setCreatingTenant(false);
+    }
+  };
+
   const updateTenantName = async (tenantId: string) => {
     if (!adminToken) return;
     const name = editTenantName[tenantId];
@@ -1757,6 +1836,19 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const kioskQrImageUrl = useMemo(() => {
     return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(kioskUrl)}`;
   }, [kioskUrl]);
+
+  const branchKioskLinks = useMemo(() => {
+    return branches.map((branch) => {
+      const url = new URL(window.location.origin + window.location.pathname);
+      url.searchParams.set('kiosk', '1');
+      url.searchParams.set('tenant_id', tenantId);
+      url.searchParams.set('branch', branch);
+      return {
+        branch,
+        url: url.toString(),
+      };
+    });
+  }, [branches, tenantId]);
 
   const analytics = useMemo(() => {
     let totalWait = 0, totalService = 0, waitCount = 0, serviceCount = 0;
@@ -2700,6 +2792,7 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           qrService={qrService}
                           kioskUrl={kioskUrl}
                           kioskQrImageUrl={kioskQrImageUrl}
+                          branchKioskLinks={branchKioskLinks}
                           onAddIP={addIP}
                           onSaveAccessMode={saveAccessMode}
                           onRegisterTrustedDevice={registerTrustedDevice}
@@ -2723,6 +2816,14 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                               showNotification('Kiosk URL copied.');
                             } catch {
                               showNotification('Failed to copy kiosk URL.', true);
+                            }
+                          }}
+                          onCopyBranchKioskUrl={async (url) => {
+                            try {
+                              await navigator.clipboard.writeText(url);
+                              showNotification('Branch kiosk URL copied.');
+                            } catch {
+                              showNotification('Failed to copy branch kiosk URL.', true);
                             }
                           }}
                         />
@@ -2851,12 +2952,27 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           onRefreshUsers={() => loadAdminUsers()}
                           onRefreshTenants={() => loadAdminTenants()}
                           onUpdateUserRole={updateUserRole}
+                          onResetUserPassword={resetUserPassword}
                           onDeleteUser={deleteUser}
                           onSetConfirmDeleteUser={setConfirmDeleteUser}
                           onSetEditTenantName={setEditTenantName}
                           onUpdateTenantName={updateTenantName}
                           onSetEditTenantPlan={setEditTenantPlan}
                           onUpdateTenantPlan={updateTenantPlan}
+                          newTenantName={newTenantName}
+                          newTenantSlug={newTenantSlug}
+                          newTenantPlan={newTenantPlan}
+                          newTenantAdminName={newTenantAdminName}
+                          newTenantAdminEmail={newTenantAdminEmail}
+                          newTenantAdminPassword={newTenantAdminPassword}
+                          creatingTenant={creatingTenant}
+                          onSetNewTenantName={setNewTenantName}
+                          onSetNewTenantSlug={setNewTenantSlug}
+                          onSetNewTenantPlan={setNewTenantPlan}
+                          onSetNewTenantAdminName={setNewTenantAdminName}
+                          onSetNewTenantAdminEmail={setNewTenantAdminEmail}
+                          onSetNewTenantAdminPassword={setNewTenantAdminPassword}
+                          onCreateTenant={createTenant}
                           onDeleteTenant={deleteTenant}
                           onSetConfirmDeleteTenant={setConfirmDeleteTenant}
                         />
