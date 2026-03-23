@@ -858,13 +858,26 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
     return filePath;
   };
 
-  const sendMailWithAttachments = async (to: string, subject: string, text: string, files: { path: string; filename?: string }[], tenantSettings: any) => {
-    const smtp = tenantSettings?.smtp || {
+  const resolveSmtpConfig = (tenantSettings: any) => {
+    return tenantSettings?.smtp || {
       host: process.env.SMTP_HOST || 'localhost',
       port: Number(process.env.SMTP_PORT || 25),
       secure: (process.env.SMTP_SECURE === 'true') || false,
       auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
     };
+  };
+
+  const isSmtpConfigured = (smtp: any) => {
+    const host = typeof smtp?.host === 'string' ? smtp.host.trim() : '';
+    return host.length > 0;
+  };
+
+  const sendMailWithAttachments = async (to: string, subject: string, text: string, files: { path: string; filename?: string }[], tenantSettings: any) => {
+    const smtp = resolveSmtpConfig(tenantSettings);
+    if (!isSmtpConfigured(smtp)) {
+      console.warn(`[MAIL] SMTP is not configured; skipping email send for subject: ${subject}`);
+      return;
+    }
 
     const transporter = nodemailer.createTransport(smtp as any);
     await transporter.sendMail({
@@ -879,6 +892,11 @@ export async function createSmartQueueServer(options: CreateAppOptions = {}) {
   const generateAndSendReport = async (tenantId: string, period: 'daily' | 'monthly') => {
     const tenant = getTenant(tenantId) || { settings: '{}' };
     const settings = tenant.settings ? JSON.parse(tenant.settings) : {};
+    const smtp = resolveSmtpConfig(settings);
+    if (!isSmtpConfigured(smtp)) {
+      console.warn(`[REPORT] SMTP is not configured; skipping ${period} report email for tenant ${tenantId}`);
+      return;
+    }
     const to = settings?.email_contact || settings?.admin_email || process.env.ADMIN_EMAIL || 'admin@example.com';
     const now = new Date();
     let fromDate: string;

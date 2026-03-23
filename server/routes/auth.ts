@@ -138,10 +138,16 @@ export function registerAuthRoutes({
 
     const appUrl = process.env.APP_URL || "https://erp-queue-production.up.railway.app";
     const resetLink = `${appUrl}/?reset_token=${resetToken}`;
+    const smtpHost = typeof process.env.SMTP_HOST === "string" ? process.env.SMTP_HOST.trim() : "";
+
+    if (!smtpHost) {
+      console.warn("[AUTH] SMTP is not configured; skipping reset email delivery.");
+      return res.json({ status: "ok" });
+    }
 
     try {
       const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || "localhost",
+        host: smtpHost,
         port: Number(process.env.SMTP_PORT || 25),
         secure: process.env.SMTP_SECURE === "true",
         auth: process.env.SMTP_USER
