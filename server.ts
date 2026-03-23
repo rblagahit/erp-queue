@@ -639,26 +639,79 @@ async function startServer() {
     db.prepare("UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?")
       .run(resetToken, expiry, user.id);
 
-    const appUrl = process.env.APP_URL || "https://erp-queue-production.up.railway.app";
-    const resetLink = `${appUrl}/?reset_token=${resetToken}`;
+    const configuredAppUrl = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
+    const hostUrl = req.get("host") ? `${req.protocol}://${req.get("host")}` : "";
+    const baseUrl = configuredAppUrl || hostUrl || "https://erp-queue-production.up.railway.app";
+    const resetLink = `${baseUrl}/?reset_token=${resetToken}`;
 
+    let tenantSettings: any = {};
     try {
-      const smtpConfig = {
-        host: process.env.SMTP_HOST || "localhost",
-        port: Number(process.env.SMTP_PORT || 25),
-        secure: process.env.SMTP_SECURE === "true",
-        auth: process.env.SMTP_USER
-          ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-          : undefined,
-      };
-      await sendMailWithFallback(smtpConfig, {
-        from: process.env.SMTP_FROM || "no-reply@ssb.local",
-        to: user.email,
-        subject: "Password Reset Request",
-        text: `You requested a password reset.\n\nClick the link below to reset your password (valid for 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`,
-      });
-    } catch (err) {
-      console.error("[AUTH] Failed to send reset email:", err);
+      const tenant = db.prepare("SELECT settings FROM tenants WHERE id = ?").get(user.tenant_id) as any;
+      tenantSettings = tenant?.settings ? JSON.parse(tenant.settings) : {};
+    } catch {
+      tenantSettings = {};
+    }
+
+    const tenantSmtp = tenantSettings?.smtp?.host
+      ? {
+          host: tenantSettings.smtp.host,
+          port: Number(tenantSettings.smtp.port || 587),
+          secure: !!tenantSettings.smtp.secure,
+          auth: tenantSettings.smtp.auth?.user
+            ? {
+                user: tenantSettings.smtp.auth.user,
+                pass: tenantSettings.smtp.auth.pass || "",
+              }
+            : undefined,
+          from: tenantSettings.smtp.from || undefined,
+        }
+      : null;
+
+    const envSmtp = process.env.SMTP_HOST
+      ? {
+          host: process.env.SMTP_HOST,
+          port: Number(process.env.SMTP_PORT || 25),
+          secure: process.env.SMTP_SECURE === "true",
+          auth: process.env.SMTP_USER
+            ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+            : undefined,
+          from: process.env.SMTP_FROM || undefined,
+        }
+      : null;
+
+    const smtpCandidates = [
+      tenantSmtp ? { source: "tenant", ...tenantSmtp } : null,
+      envSmtp ? { source: "env", ...envSmtp } : null,
+    ].filter(Boolean) as Array<any>;
+
+    let sent = false;
+    let lastError: unknown = null;
+
+    for (const smtp of smtpCandidates) {
+      try {
+        await sendMailWithFallback(smtp, {
+          from: smtp.from || process.env.SMTP_FROM || "no-reply@ssb.local",
+          to: user.email,
+          subject: "Password Reset Request",
+          text: `You requested a password reset.\n\nClick the link below to reset your password (valid for 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`,
+        });
+        sent = true;
+        break;
+      } catch (err) {
+        lastError = err;
+        console.error(`[AUTH] Failed to send reset email using ${smtp.source} SMTP:`, err);
+      }
+    }
+
+    if (!sent) {
+      if (!smtpCandidates.length) {
+        console.error("[AUTH] Failed to send reset email: SMTP is not configured");
+      } else {
+        console.error("[AUTH] Failed to send reset email after all SMTP attempts", lastError);
+      }
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[AUTH] Dev fallback reset link:", resetLink);
+      }
     }
 
     res.json({ status: "ok" });
