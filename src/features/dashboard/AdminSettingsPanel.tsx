@@ -14,6 +14,10 @@ type AdminSettingsPanelProps = {
   companyLogoUrl: string;
   logoUploading: boolean;
   profileSaving: boolean;
+  currentPasswordInput: string;
+  newPasswordInput: string;
+  confirmNewPasswordInput: string;
+  passwordSaving: boolean;
   apiKey: string;
   apiKeyInput: string;
   showApiKey: boolean;
@@ -39,6 +43,10 @@ type AdminSettingsPanelProps = {
   onSetIndustry: (value: string) => void;
   onSetContactEmail: (value: string) => void;
   onSetContactPhone: (value: string) => void;
+  onChangePassword: (e: FormEvent<HTMLFormElement>) => void;
+  onSetCurrentPasswordInput: (value: string) => void;
+  onSetNewPasswordInput: (value: string) => void;
+  onSetConfirmNewPasswordInput: (value: string) => void;
   onRemoveApiKey: () => void;
   onSaveApiKey: (e: FormEvent<HTMLFormElement>) => void;
   onSetApiKeyInput: (value: string) => void;
@@ -69,6 +77,10 @@ export default function AdminSettingsPanel({
   companyLogoUrl,
   logoUploading,
   profileSaving,
+  currentPasswordInput,
+  newPasswordInput,
+  confirmNewPasswordInput,
+  passwordSaving,
   apiKey,
   apiKeyInput,
   showApiKey,
@@ -94,6 +106,10 @@ export default function AdminSettingsPanel({
   onSetIndustry,
   onSetContactEmail,
   onSetContactPhone,
+  onChangePassword,
+  onSetCurrentPasswordInput,
+  onSetNewPasswordInput,
+  onSetConfirmNewPasswordInput,
   onRemoveApiKey,
   onSaveApiKey,
   onSetApiKeyInput,
@@ -175,6 +191,52 @@ export default function AdminSettingsPanel({
               {profileSaving ? 'Saving…' : 'Save Company Profile'}
             </button>
           </form>
+
+          <div className="border-t pt-4">
+            <div className="mb-3">
+              <h5 className="text-xs font-black text-[#003366] uppercase tracking-wider">Change Password</h5>
+              <p className="text-[10px] text-slate-400 mt-0.5">Update your own login password after signing in.</p>
+            </div>
+            <form onSubmit={onChangePassword} className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Current Password</label>
+                <input
+                  type="password"
+                  value={currentPasswordInput}
+                  onChange={(e) => onSetCurrentPasswordInput(e.target.value)}
+                  placeholder="Enter current password"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">New Password</label>
+                  <input
+                    type="password"
+                    value={newPasswordInput}
+                    onChange={(e) => onSetNewPasswordInput(e.target.value)}
+                    placeholder="Minimum 8 characters"
+                    minLength={8}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    value={confirmNewPasswordInput}
+                    onChange={(e) => onSetConfirmNewPasswordInput(e.target.value)}
+                    placeholder="Repeat new password"
+                    minLength={8}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-amber-400 transition-all"
+                  />
+                </div>
+              </div>
+              <button type="submit" disabled={passwordSaving} className="w-full py-2.5 btn-primary rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-40">
+                {passwordSaving ? 'Updating…' : 'Update Password'}
+              </button>
+            </form>
+          </div>
         </div>
       )}
 

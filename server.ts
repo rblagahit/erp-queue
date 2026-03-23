@@ -578,6 +578,32 @@ async function startServer() {
     res.json(user);
   });
 
+  app.post("/api/auth/change-password", requireAdmin, async (req, res) => {
+    const token = req.headers["x-admin-token"] as string;
+    const session = db.prepare("SELECT user_id FROM admin_sessions WHERE token = ?").get(token) as any;
+    if (!session?.user_id) return res.status(401).json({ error: "Invalid or expired session" });
+
+    const { currentPassword, newPassword } = req.body || {};
+    if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
+      return res.status(400).json({ error: "Current password and new password are required" });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: "New password must be at least 8 characters" });
+    }
+
+    const user = db.prepare("SELECT id, password_hash FROM users WHERE id = ?").get(session.user_id) as any;
+    if (!user) return res.status(401).json({ error: "Invalid or expired session" });
+
+    const isValid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isValid) return res.status(400).json({ error: "Current password is incorrect" });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    db.prepare("UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?")
+      .run(hash, user.id);
+
+    res.json({ status: "ok" });
+  });
+
   app.post("/api/auth/register", async (req, res) => {
     const { name, organization, email, password } = req.body;
     if (!name || !email || !password) {

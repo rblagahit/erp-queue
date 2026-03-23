@@ -192,6 +192,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
   const [companyLogoUrl, setCompanyLogoUrl] = useState('');
   const [logoUploading, setLogoUploading] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
   const [billingMe, setBillingMe] = useState<any>(null);
   const [billingOverview, setBillingOverview] = useState<any>(null);
   const [billingSubmissions, setBillingSubmissions] = useState<any[]>([]);
@@ -752,6 +756,45 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
       showNotification('Failed to save profile. Check connection.', true);
     } finally {
       setProfileSaving(false);
+    }
+  };
+
+  const changePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminToken) return;
+    if (!currentPasswordInput || !newPasswordInput || !confirmNewPasswordInput) {
+      showNotification('Fill in current password, new password, and confirmation.', true);
+      return;
+    }
+    if (newPasswordInput.length < 8) {
+      showNotification('New password must be at least 8 characters.', true);
+      return;
+    }
+    if (newPasswordInput !== confirmNewPasswordInput) {
+      showNotification('New password and confirmation do not match.', true);
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ currentPassword: currentPasswordInput, newPassword: newPasswordInput }),
+      });
+      if (res.ok) {
+        setCurrentPasswordInput('');
+        setNewPasswordInput('');
+        setConfirmNewPasswordInput('');
+        showNotification('Password updated successfully.');
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to change password.' }));
+        showNotification(err.error || 'Failed to change password.', true);
+      }
+    } catch {
+      showNotification('Failed to change password. Check connection.', true);
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
@@ -2884,6 +2927,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           companyLogoUrl={companyLogoUrl}
                           logoUploading={logoUploading}
                           profileSaving={profileSaving}
+                          currentPasswordInput={currentPasswordInput}
+                          newPasswordInput={newPasswordInput}
+                          confirmNewPasswordInput={confirmNewPasswordInput}
+                          passwordSaving={passwordSaving}
                           apiKey={apiKey}
                           apiKeyInput={apiKeyInput}
                           showApiKey={showApiKey}
@@ -2909,6 +2956,10 @@ export default function App({ onGoToLanding, initialView = 'teller', loginRole =
                           onSetIndustry={setIndustry}
                           onSetContactEmail={setContactEmail}
                           onSetContactPhone={setContactPhone}
+                          onChangePassword={changePassword}
+                          onSetCurrentPasswordInput={setCurrentPasswordInput}
+                          onSetNewPasswordInput={setNewPasswordInput}
+                          onSetConfirmNewPasswordInput={setConfirmNewPasswordInput}
                           onRemoveApiKey={removeApiKey}
                           onSaveApiKey={saveApiKey}
                           onSetApiKeyInput={setApiKeyInput}
